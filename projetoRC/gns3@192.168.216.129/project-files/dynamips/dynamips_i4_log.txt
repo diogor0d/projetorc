@@ -1,0 +1,15 @@
+May 14 17:38:50.443 HYPERVISOR: Release 0.2.23-amd64/Darwin (tag 2023010200)
+May 14 17:38:50.444 HYPERVISOR: Started on IP = 127.0.0.1, TCP port = 50535.
+May 14 17:38:50.454 HYPERVISOR: exec_cmd: hypervisor version 
+May 14 17:38:50.454 HYPERVISOR: exec_cmd: hypervisor working_dir /Users/guirosmaninho/Library/CloudStorage/GoogleDrive-gui.rosmaninho@gmail.com/My Drive/Escola/UC/LEI 2/RC/projetorc/projetoRC/project-files/dynamips 
+May 14 17:38:50.454 GENERAL: working_dir=/Users/guirosmaninho/Library/CloudStorage/GoogleDrive-gui.rosmaninho@gmail.com/My Drive/Escola/UC/LEI 2/RC/projetorc/projetoRC/project-files/dynamips
+May 14 17:38:50.454 HYPERVISOR: exec_cmd: ethsw create Switch1 
+May 14 17:38:50.917 HYPERVISOR: exec_cmd: nio create_udp udp-69b04af6-9d57-48ce-9e61-d6047ff780bf 10005 127.0.0.1 10004 
+May 14 17:38:50.917 HYPERVISOR: exec_cmd: ethsw add_nio Switch1 udp-69b04af6-9d57-48ce-9e61-d6047ff780bf 
+May 14 17:38:50.919 HYPERVISOR: exec_cmd: ethsw set_access_port Switch1 udp-69b04af6-9d57-48ce-9e61-d6047ff780bf 1 
+May 14 17:38:50.933 HYPERVISOR: exec_cmd: nio create_udp udp-31be768a-6b1e-4571-b9d3-f04f61e8e06f 10008 127.0.0.1 10009 
+May 14 17:38:50.933 HYPERVISOR: exec_cmd: ethsw add_nio Switch1 udp-31be768a-6b1e-4571-b9d3-f04f61e8e06f 
+May 14 17:38:50.939 HYPERVISOR: exec_cmd: ethsw set_access_port Switch1 udp-31be768a-6b1e-4571-b9d3-f04f61e8e06f 1 
+May 14 17:38:51.211 HYPERVISOR: exec_cmd: nio create_udp udp-de846b94-72b7-42a4-b89c-b894eded4b25 10016 127.0.0.1 10017 
+May 14 17:38:51.211 HYPERVISOR: exec_cmd: ethsw add_nio Switch1 udp-de846b94-72b7-42a4-b89c-b894eded4b25 
+May 14 17:38:51.218 HYPERVISOR: exec_cmd: ethsw set_access_port Switch1 udp-de846b94-72b7-42a4-b89c-b894eded4b25 1 
