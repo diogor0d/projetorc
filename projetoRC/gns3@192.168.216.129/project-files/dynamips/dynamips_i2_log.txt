@@ -1,0 +1,28 @@
+May 14 17:38:50.310 HYPERVISOR: Release 0.2.23-amd64/Darwin (tag 2023010200)
+May 14 17:38:50.311 HYPERVISOR: Started on IP = 127.0.0.1, TCP port = 50523.
+May 14 17:38:50.320 HYPERVISOR: exec_cmd: hypervisor version 
+May 14 17:38:50.321 HYPERVISOR: exec_cmd: hypervisor working_dir /Users/guirosmaninho/Library/CloudStorage/GoogleDrive-gui.rosmaninho@gmail.com/My Drive/Escola/UC/LEI 2/RC/projetorc/projetoRC/project-files/dynamips 
+May 14 17:38:50.321 GENERAL: working_dir=/Users/guirosmaninho/Library/CloudStorage/GoogleDrive-gui.rosmaninho@gmail.com/My Drive/Escola/UC/LEI 2/RC/projetorc/projetoRC/project-files/dynamips
+May 14 17:38:50.321 HYPERVISOR: exec_cmd: hypervisor working_dir /Users/guirosmaninho/Library/CloudStorage/GoogleDrive-gui.rosmaninho@gmail.com/My Drive/Escola/UC/LEI 2/RC/projetorc/projetoRC/project-files/dynamips/38ef51d0-f638-4817-bb4b-cf3c80c4af51 
+May 14 17:38:50.321 GENERAL: working_dir=/Users/guirosmaninho/Library/CloudStorage/GoogleDrive-gui.rosmaninho@gmail.com/My Drive/Escola/UC/LEI 2/RC/projetorc/projetoRC/project-files/dynamips/38ef51d0-f638-4817-bb4b-cf3c80c4af51
+May 14 17:38:50.321 HYPERVISOR: exec_cmd: vm create R2 2 c2691 
+May 14 17:38:50.322 VM: VM R2 created.
+May 14 17:38:50.322 HYPERVISOR: exec_cmd: vm set_con_tcp_port R2 5015 
+May 14 17:38:50.322 HYPERVISOR: exec_cmd: c2691 get_mac_addr R2 
+May 14 17:38:50.323 HYPERVISOR: exec_cmd: vm set_disk0 R2 0 
+May 14 17:38:50.323 HYPERVISOR: exec_cmd: vm get_status R2 
+May 14 17:38:50.323 HYPERVISOR: exec_cmd: vm set_idle_pc R2 0x60bcf9f8 
+May 14 17:38:50.324 HYPERVISOR: exec_cmd: vm set_ios R2 /Users/guirosmaninho/GNS3/images/IOS/c2691-adventerprisek9-mz.124-15.T14.image 
+May 14 17:38:50.324 HYPERVISOR: exec_cmd: c2691 set_mac_addr R2 c002.bef6.0000 
+May 14 17:38:50.325 HYPERVISOR: exec_cmd: vm set_nvram R2 256 
+May 14 17:38:50.325 HYPERVISOR: exec_cmd: vm set_ram R2 192 
+May 14 17:38:50.325 HYPERVISOR: exec_cmd: vm get_status R2 
+May 14 17:38:50.325 HYPERVISOR: exec_cmd: vm slot_add_binding R2 1 0 NM-1FE-TX 
+May 14 17:38:50.325 HYPERVISOR: exec_cmd: vm get_status R2 
+May 14 17:38:50.325 HYPERVISOR: exec_cmd: vm slot_add_binding R2 0 16 WIC-1T 
+May 14 17:38:50.942 HYPERVISOR: exec_cmd: nio create_udp udp-6c6380d1-5e3e-484d-b3c9-d8175d06de51 10010 127.0.0.1 10011 
+May 14 17:38:51.168 HYPERVISOR: exec_cmd: vm slot_add_nio_binding R2 0 0 udp-6c6380d1-5e3e-484d-b3c9-d8175d06de51 
+May 14 17:38:51.168 HYPERVISOR: exec_cmd: vm get_status R2 
+May 14 17:38:51.181 HYPERVISOR: exec_cmd: nio create_udp udp-72193f37-a9b0-4bfe-999e-9b87b290133c 10014 127.0.0.1 10015 
+May 14 17:38:51.182 HYPERVISOR: exec_cmd: vm slot_add_nio_binding R2 0 1 udp-72193f37-a9b0-4bfe-999e-9b87b290133c 
+May 14 17:38:51.182 HYPERVISOR: exec_cmd: vm get_status R2 
