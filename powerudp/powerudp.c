@@ -671,73 +671,111 @@ int receive_message(char *buffer, int bufsize)
 
     power_udp_packet_t received_packet;     // Pacote PowerUDP recebido
     struct sockaddr_in current_sender_addr; // Para guardar endereço do remetente
-    socklen_t current_addr_len = sizeof(current_sender_addr);
+    socklen_t current_addr_len;
 
-    // Loop para apenas retornar pacotes DATA válidos para a aplicação.
-    // Ignorará ACKs/NAKs perdidos (tratados pelo loop select de send_message)
-    // e tratará da numeração de sequência.
     while (protocol_initialized)
-    {                                                         // Verificar protocol_initialized na condição do loop
-        memset(&received_packet, 0, sizeof(received_packet)); // Limpar pacote
-        // Chamada bloqueante a recvfrom para esperar por pacotes
-        ssize_t bytes_received = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), 0,
-                                          (struct sockaddr *)&current_sender_addr, &current_addr_len);
+    {
+        memset(&received_packet, 0, sizeof(received_packet));
+        current_addr_len = sizeof(current_sender_addr); // Reset for each call
+
+        // Step 1: Peek at the incoming packet without removing it from the queue
+        ssize_t bytes_peeked = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), MSG_PEEK,
+                                        (struct sockaddr *)&current_sender_addr, &current_addr_len);
 
         if (!protocol_initialized)
-        { // Verificar se o protocolo foi fechado enquanto bloqueado
-            printf("[PowerUDP] receive_message: Protocolo fechado durante recvfrom.\n");
-            return 0;
+        {
+            printf("[PowerUDP] receive_message: Protocolo fechado durante PEEK.\n");
+            return 0; // Or appropriate exit code if shutdown initiated
         }
 
-        if (bytes_received < 0)
-        { // Erro no recvfrom
-            if (errno == EINTR)
-                continue; // Interrompido por sinal, tentar recvfrom novamente
-            // Imprimir erro apenas se o protocolo ainda estiver inicializado e não for um sinal de encerramento gracioso
-            if (protocol_initialized)
-                perror("[PowerUDP Error] recvfrom data packet");
-            return -1;
-        }
-        if (bytes_received == 0)
+        if (bytes_peeked < 0)
         {
-            printf("[PowerUDP Warning] recvfrom devolveu 0 bytes.\n");
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                // This might happen if SO_RCVTIMEO is set on udp_socket_internal,
+                // or if the socket was made non-blocking.
+                // For a blocking socket without SO_RCVTIMEO, this path is less likely.
+                usleep(10000); // Short pause (10ms) and retry
+                continue;
+            }
+            if (errno == EINTR)
+                continue; // Interrupted by signal, retry PEEK
+
+            // Only print error if protocol is supposed to be running
+            if (protocol_initialized)
+                perror("[PowerUDP Error] recvfrom MSG_PEEK in receive_message");
+            return -1; // Propagate other errors
+        }
+
+        if (bytes_peeked == 0)
+        { // Should not happen with UDP if sender sent data
+            printf("[PowerUDP Warning] recvfrom MSG_PEEK devolveu 0 bytes. Retrying.\n");
+            usleep(10000); // Brief pause before retrying
             continue;
         }
 
         // Validação básica: deve ter pelo menos o tamanho de um cabeçalho
-        if (bytes_received < (ssize_t)sizeof(power_udp_header_t))
+        if (bytes_peeked < (ssize_t)sizeof(power_udp_header_t))
         {
-            printf("[PowerUDP Warning] Pacote recebido demasiado curto (%zd bytes). Ignorando.\n", bytes_received);
+            printf("[PowerUDP Warning] Pacote PEEKED demasiado curto (%zd bytes). Consumindo e ignorando.\n", bytes_peeked);
+            // Consume the malformed/short packet to clear it from the OS queue
+            char dummy_buffer[MAX_PAYLOAD_SIZE + sizeof(power_udp_header_t) + 100];           // Sufficiently large
+            recvfrom(udp_socket_internal, dummy_buffer, sizeof(dummy_buffer), 0, NULL, NULL); // Consume
             continue;
         }
 
-        // Se for um pacote de dados
+        // Step 2: Decide based on peeked type
         if (received_packet.header.type == PACKET_TYPE_DATA)
         {
-            uint32_t recv_seq_num_net = received_packet.header.sequence_number; // Manter em network order para ACK/NAK
-            uint32_t recv_seq_num_host = ntohl(recv_seq_num_net);               // Converter para host order para lógica
-            uint16_t data_len = ntohs(received_packet.header.data_length);      // Comprimento dos dados
+            // It's a DATA packet. Now actually consume it from the queue.
+            current_addr_len = sizeof(current_sender_addr); // Reset for consuming read
+            ssize_t bytes_consumed = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), 0,
+                                              (struct sockaddr *)&current_sender_addr, &current_addr_len);
 
-            // Validar data_len contra o tamanho real do payload recebido e capacidade do buffer da aplicação
-            if (data_len > (bytes_received - sizeof(power_udp_header_t)))
+            if (!protocol_initialized)
+            { // Check again after potentially blocking call
+                printf("[PowerUDP] receive_message: Protocolo fechado após PEEK, durante consumo de DATA.\n");
+                return 0;
+            }
+
+            if (bytes_consumed < 0)
+            {
+                if (errno == EINTR)
+                    continue; // Interrupted, retry loop
+                if (protocol_initialized)
+                    perror("[PowerUDP Error] recvfrom (consume DATA) in receive_message");
+                return -1;
+            }
+            if (bytes_consumed < (ssize_t)sizeof(power_udp_header_t))
+            { // Should be consistent with peek
+                printf("[PowerUDP Warning] Pacote DATA consumido demasiado curto (%zd bytes). Ignorando.\n", bytes_consumed);
+                continue;
+            }
+
+            // --- BEGINNING OF YOUR EXISTING PACKET_TYPE_DATA LOGIC ---
+            // IMPORTANT: Replace 'bytes_received' with 'bytes_consumed' in this section
+            uint32_t recv_seq_num_net = received_packet.header.sequence_number;
+            uint32_t recv_seq_num_host = ntohl(recv_seq_num_net);
+            uint16_t data_len = ntohs(received_packet.header.data_length);
+
+            if (data_len > (bytes_consumed - sizeof(power_udp_header_t)))
             {
                 fprintf(stderr, "[PowerUDP Warning] Inconsistência no tamanho do payload DATA (declarado %u, efetivo %ld). Ignorando.\n",
-                        data_len, (long)(bytes_received - sizeof(power_udp_header_t)));
+                        data_len, (long)(bytes_consumed - sizeof(power_udp_header_t)));
                 continue;
             }
             if (data_len == 0)
-            { // Pacote de dados vazio
+            {
                 printf("[PowerUDP Info] Pacote DATA (seq %u) recebido com payload vazio (len 0).\n", recv_seq_num_host);
             }
             if (data_len > (unsigned int)bufsize)
-            { // Payload excede buffer da aplicação
+            {
                 fprintf(stderr, "[PowerUDP Warning] Payload do pacote DATA (%u bytes) excede buffer da aplicação (%d bytes). Pacote descartado.\n", data_len, bufsize);
-                // Enviar NAK se retransmissões estiverem ativadas
                 if (internal_power_udp_state.retransmission_enabled && internal_power_udp_state.sequence_enabled)
-                { // NAK implica sequência
+                {
                     power_udp_packet_t nak_packet;
                     nak_packet.header.type = PACKET_TYPE_NAK;
-                    nak_packet.header.sequence_number = recv_seq_num_net; // NAK para a sequência recebida
+                    nak_packet.header.sequence_number = recv_seq_num_net;
                     nak_packet.header.data_length = 0;
                     sendto(udp_socket_internal, &nak_packet, sizeof(power_udp_header_t), 0,
                            (struct sockaddr *)&current_sender_addr, current_addr_len);
@@ -750,36 +788,30 @@ int receive_message(char *buffer, int bufsize)
                    recv_seq_num_host, data_len,
                    inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
 
-            int send_ack_flag = 0;      // Flag para indicar se um ACK deve ser enviado
-            int accept_packet_flag = 0; // Flag para indicar se o pacote deve ser entregue à aplicação
+            int send_ack_flag = 0;
+            int accept_packet_flag = 0;
 
-            // Lógica de numeração de sequência
             if (internal_power_udp_state.sequence_enabled)
             {
                 if (recv_seq_num_host == internal_power_udp_state.expected_recv_sequence_number)
                 {
-                    // Pacote está em ordem
-                    accept_packet_flag = 1;                                   // Aceitar pacote
-                    send_ack_flag = 1;                                        // Enviar ACK para este pacote
-                    internal_power_udp_state.expected_recv_sequence_number++; // Esperar pelo próximo
+                    accept_packet_flag = 1;
+                    send_ack_flag = 1;
+                    internal_power_udp_state.expected_recv_sequence_number++;
                 }
                 else if (recv_seq_num_host < internal_power_udp_state.expected_recv_sequence_number)
                 {
-                    // Pacote duplicado/antigo. Já processado.
-                    // Enviar ACK novamente caso o ACK anterior tenha sido perdido (conforme RDT típico).
                     send_ack_flag = 1;
-                    accept_packet_flag = 0; // Não entregar à aplicação novamente
+                    accept_packet_flag = 0;
                     printf("[PowerUDP Info] Pacote DATA duplicado/antigo (seq %u, esperado %u). Reenviando ACK.\n",
                            recv_seq_num_host, internal_power_udp_state.expected_recv_sequence_number);
                 }
                 else
-                { // recv_seq_num_host > internal_power_udp_state.expected_recv_sequence_number (Falha detetada / Fora de ordem)
-                    // Pacote está fora de ordem (pacote futuro). Rejeitar e enviar NAK.
+                { // recv_seq_num_host > internal_power_udp_state.expected_recv_sequence_number
                     if (internal_power_udp_state.retransmission_enabled)
-                    { // NAK só faz sentido se o emissor retransmitir
+                    {
                         power_udp_packet_t nak_packet;
                         nak_packet.header.type = PACKET_TYPE_NAK;
-                        // NAK para o número de sequência *recebido* fora de ordem
                         nak_packet.header.sequence_number = recv_seq_num_net;
                         nak_packet.header.data_length = 0;
                         sendto(udp_socket_internal, &nak_packet, sizeof(power_udp_header_t), 0,
@@ -787,55 +819,64 @@ int receive_message(char *buffer, int bufsize)
                         printf("[PowerUDP] Pacote DATA fora de ordem (seq %u, esperado %u). Enviado NAK para seq %u.\n",
                                recv_seq_num_host, internal_power_udp_state.expected_recv_sequence_number, recv_seq_num_host);
                     }
-                    accept_packet_flag = 0; // Não aceitar pacote fora de ordem
+                    accept_packet_flag = 0;
                 }
             }
             else
-            {                           // Numeração de sequência desativada
-                accept_packet_flag = 1; // Aceitar qualquer pacote de dados
-                send_ack_flag = 1;      // Ainda enviar ACK se retransmissões estiverem ativadas
+            {
+                accept_packet_flag = 1;
+                send_ack_flag = 1;
             }
 
-            // Enviar ACK se necessário (e retransmissões estiverem globalmente ativadas)
             if (send_ack_flag && internal_power_udp_state.retransmission_enabled)
             {
                 power_udp_packet_t ack_packet;
                 ack_packet.header.type = PACKET_TYPE_ACK;
-                // ACK para o número de sequência que foi realmente recebido e aceite (ou re-ACKed para duplicados)
-                ack_packet.header.sequence_number = recv_seq_num_net;
+                ack_packet.header.sequence_number = recv_seq_num_net; // ACK the received sequence number
                 ack_packet.header.data_length = 0;
 
-                // Simular perda de ACK
                 if (internal_power_udp_state.packet_loss_probability > 0 && (rand() % 100) < (internal_power_udp_state.packet_loss_probability / 2))
-                { // Simular perda de ACK com menor frequência que dados
+                {
                     printf("[PowerUDP SIMULATE] Pacote ACK (seq %u) para %s:%d PERDIDO.\n",
                            recv_seq_num_host, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
                 }
                 else
-                { // Enviar ACK
+                {
                     sendto(udp_socket_internal, &ack_packet, sizeof(power_udp_header_t), 0,
                            (struct sockaddr *)&current_sender_addr, current_addr_len);
                     printf("[PowerUDP] ACK (seq %u) enviado para %s:%d.\n", recv_seq_num_host, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
                 }
             }
 
-            // Se o pacote for aceite, copiar para o buffer da aplicação e retornar
             if (accept_packet_flag)
             {
                 memcpy(buffer, received_packet.payload, data_len);
-                buffer[data_len] = '\0';
+                buffer[data_len] = '\0'; // Ensure null termination for string payloads
                 return data_len;
             }
-            continue;
+            continue; // If not accepted, loop for next packet
+            // --- END OF YOUR EXISTING PACKET_TYPE_DATA LOGIC ---
+        }
+        else if (received_packet.header.type == PACKET_TYPE_ACK ||
+                 received_packet.header.type == PACKET_TYPE_NAK)
+        {
+            // It's an ACK or NAK. This is likely for send_message().
+            // Do NOT consume it with recvfrom() here. Let send_message's select/recvfrom handle it.
+            // Yield CPU for a very short time to give send_message a chance.
+            usleep(1000); // 1 millisecond. This allows send_message's select() to wake up and its recvfrom() to get the ACK/NAK.
+            continue;     // Loop back to PEEK again.
         }
         else
-        { // Tipo de pacote desconhecido
-            printf("[PowerUDP Warning] Pacote de tipo desconhecido (%d) recebido. Ignorando.\n", received_packet.header.type);
-            continue; // Ignorar e esperar por um pacote DATA válido
+        {
+            // Peeked an unknown packet type. Consume it from the queue and log.
+            printf("[PowerUDP Warning] Pacote PEEKED de tipo desconhecido (%d). Consumindo e ignorando.\n", received_packet.header.type);
+            char dummy_buffer[MAX_PAYLOAD_SIZE + sizeof(power_udp_header_t) + 100];
+            recvfrom(udp_socket_internal, dummy_buffer, sizeof(dummy_buffer), 0, NULL, NULL); // Consume
+            continue;
         }
     }
     printf("[PowerUDP] receive_message: Saindo do loop principal, protocolo não inicializado.\n");
-    return 0;
+    return 0; // Should only be reached if protocol_initialized becomes false
 }
 
 // Obtém estatísticas da última mensagem enviada pelo PowerUDP
