@@ -41,7 +41,7 @@ void *power_udp_receiver_thread_func(void *arg)
         {
             recv_buffer[bytes_received] = '\0';
             // Não temos mais o IP/Porta do remetente diretamente de receive_message
-            printf("\n\033[32m<Mensagem Recebida> %s\033[0m\n> ", recv_buffer);
+            printf("\n<Mensagem Recebida> %s\n> ", recv_buffer);
             fflush(stdout);
         }
         else if (bytes_received == 0)
@@ -73,7 +73,7 @@ void print_commands()
 {
     printf("\nComandos disponíveis:\n");
     // Comando send MODIFICADO (sem porta de destino explícita, assume-se porta PowerUDP padrão)
-    printf("  send <IP_Destino:Porta_Destino> <mensagem> - Envia uma mensagem PowerUDP\n");
+    printf("  send <IP_Destino>:<Porta_Destino> <mensagem> - Envia uma mensagem PowerUDP\n");
     printf("  config <retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries> - Pede alteração de config\n");
     printf("  stats - Mostra estatísticas da última mensagem enviada\n");
     printf("  loss <probabilidade_percentual> - Simula perda de pacotes (0-100)\n");
@@ -154,49 +154,63 @@ int main(int argc, char *argv[])
         }
         else if (strcmp(command, "send") == 0)
         {
-            // Formato: send <IP_Destino:Porta_Destino> <mensagem>
-            // O primeiro argumento após "send" é a string "IP:PORTA"
-            char *destination_str = strtok(input_line + strlen(command) + 1, " "); // Obtém "IP:PORTA"
-            char *msg_start = strtok(NULL, "");                                    // Resto da linha é a mensagem
+            // Formato: send <IP_Destino>:<Porta_Destino> <mensagem>
+            char *ip_port_str = strtok(input_line + strlen(command) + 1, " ");
+            char *msg_start = strtok(NULL, ""); // Resto da linha
 
-            if (destination_str && msg_start && strlen(msg_start) > 0)
+            if (ip_port_str && msg_start && strlen(msg_start) > 0)
             {
-                if (strlen(msg_start) > MAX_MESSAGE_USER - 1)
+                char *dest_ip_str = strtok(ip_port_str, ":");
+                char *dest_port_str = strtok(NULL, ":");
+
+                if (dest_ip_str && dest_port_str)
                 {
-                    printf("Mensagem demasiado longa (max %d caracteres).\n", MAX_MESSAGE_USER - 1);
-                }
-                else
-                {
-                    strncpy(message_payload, msg_start, MAX_MESSAGE_USER - 1);
-                    message_payload[MAX_MESSAGE_USER - 1] = '\0';
-
-                    // A string destination_str (que contém IP:PORTA) é passada diretamente
-                    printf("[Cliente] A enviar \"%s\" para %s...\n", message_payload, destination_str);
-
-                    // Chamada a send_message (assinatura original)
-                    int bytes_sent = send_message(destination_str, message_payload, strlen(message_payload));
-
-                    if (bytes_sent > 0)
+                    int dest_port_int = atoi(dest_port_str);
+                    if (dest_port_int <= 0 || dest_port_int > 65535)
                     {
-                        printf("[Cliente] Mensagem enviada com sucesso (%d bytes).\n", bytes_sent);
+                        printf("Porta de destino inválida: %s\n", dest_port_str);
+                        printf("> ");
+                        fflush(stdout);
+                        continue;
                     }
-                    else if (bytes_sent == -1)
+
+                    if (strlen(msg_start) > MAX_MESSAGE_USER - 1)
                     {
-                        printf("[Cliente Error] Falha ao enviar mensagem após todas as tentativas (verifique formato IP:PORTA e alcançabilidade).\n");
-                    }
-                    else if (bytes_sent == -2)
-                    {
-                        printf("[Cliente Error] Protocolo não inicializado (erro interno?).\n");
+                        printf("Mensagem demasiado longa (max %d caracteres).\n", MAX_MESSAGE_USER - 1);
                     }
                     else
                     {
-                        printf("[Cliente Error] Erro desconhecido ao enviar mensagem (%d).\n", bytes_sent);
+                        strncpy(message_payload, msg_start, MAX_MESSAGE_USER - 1);
+                        message_payload[MAX_MESSAGE_USER - 1] = '\0';
+                        printf("[Cliente] A enviar \"%s\" para %s:%d...\n", message_payload, dest_ip_str, dest_port_int);
+                        // Chamada a send_message MODIFICADA
+                        int bytes_sent = send_message(dest_ip_str, dest_port_int, message_payload, strlen(message_payload));
+                        if (bytes_sent > 0)
+                        {
+                            printf("[Cliente] Mensagem enviada com sucesso (%d bytes).\n", bytes_sent);
+                        }
+                        else if (bytes_sent == -1)
+                        {
+                            printf("[Cliente Error] Falha ao enviar mensagem após todas as tentativas.\n");
+                        }
+                        else if (bytes_sent == -2)
+                        {
+                            printf("[Cliente Error] Protocolo não inicializado (erro interno?).\n");
+                        }
+                        else
+                        {
+                            printf("[Cliente Error] Erro desconhecido ao enviar mensagem (%d).\n", bytes_sent);
+                        }
                     }
+                }
+                else
+                {
+                    printf("Formato inválido para IP:Porta. Use: send <IP_Destino>:<Porta_Destino> <mensagem>\n");
                 }
             }
             else
             {
-                printf("Uso: send <IP_Destino:Porta_Destino> <mensagem>\n");
+                printf("Uso: send <IP_Destino>:<Porta_Destino> <mensagem>\n");
             }
         }
         else if (strcmp(command, "config") == 0)
@@ -264,7 +278,7 @@ int main(int argc, char *argv[])
     }
     close_protocol();
     pthread_join(receiver_thread_id, NULL);
-    printf("[Cliente] Todos os recursos foram libertados.\n");
+    printf("[Cliente] Todos os recursos foram libertados. Adeus.\n");
 
     return 0;
 }

@@ -46,6 +46,10 @@ $(SERVER_TARGET): $(SERVER_SRCS)
 clean:
 	@echo "A limpar ficheiros compilados..."
 	rm ${SERVER_OUT_DIR}
+	rm ${CLIENT1_OUT_DIR}
+	rm ${CLIENT2_OUT_DIR}
+	rm ${CLIENT3_OUT_DIR}
+	@echo "Ficheiros compilados removidos."
 	@echo "Limpeza concluída."
 
 # Phony targets são targets que não representam ficheiros

@@ -2,3 +2,6 @@ RC2024_2025-Projeto.pdf
 projetorc.code-workspace
 /.vscode
 gns/projetorc
+/powerudp/cliente.dSYM
+/powerudp/.idea
+powerudp/Makefile
