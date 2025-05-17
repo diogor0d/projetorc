@@ -155,20 +155,12 @@ int init_protocol(const char *server_ip, int server_tcp_port_param, const char *
     server_addr_tcp.sin_family = AF_INET;                 // Família de endereços IPv4
     server_addr_tcp.sin_port = htons(server_tcp_port_param); // Porta do servidor (convertida para network byte order)
 
-    // Adicionar depuração aqui
-    printf("[PowerUDP Debug] Tentando converter IP: \"%s\" para servidor TCP.\n", server_ip);
-    printf("[PowerUDP Debug] Porta servidor TCP (host order): %d, Porta (network order): %d\n", server_tcp_port_param, ntohs(server_addr_tcp.sin_port));
-
     // Converter endereço IP de string para formato de rede
     if (inet_pton(AF_INET, server_ip, &server_addr_tcp.sin_addr) <= 0) {
         perror("[PowerUDP Error] inet_pton TCP server address");
         close(server_tcp_socket); server_tcp_socket = -1;
         return -1;
     }
-    // Adicionar depuração aqui
-    printf("[PowerUDP Debug] IP convertido com sucesso para: %s (para servidor TCP)\n", inet_ntoa(server_addr_tcp.sin_addr));
-    // --- FIM DO BLOCO DE PREPARAÇÃO DO ENDEREÇO COM DEPURAÇÃO ---
-
 
     // Conectar ao servidor TCP
     printf("[PowerUDP Debug] Tentando conectar a %s:%d (TCP)...\n", inet_ntoa(server_addr_tcp.sin_addr), ntohs(server_addr_tcp.sin_port));
@@ -202,41 +194,73 @@ int init_protocol(const char *server_ip, int server_tcp_port_param, const char *
     memset(&local_udp_addr, 0, sizeof(local_udp_addr));    // Limpar estrutura de endereço local
     local_udp_addr.sin_family = AF_INET;                   // Família de endereços IPv4
     local_udp_addr.sin_addr.s_addr = htonl(INADDR_ANY);    // Escutar em qualquer interface de rede
-    local_udp_addr.sin_port = htons(POWER_UDP_PORT_CLIENT); // Usar porta padrão do cliente PowerUDP
+
+    // MODIFICAÇÃO CRÍTICA: Usar porta 0 para que o SO atribua uma porta efêmera
+    local_udp_addr.sin_port = htons(0);
 
     // Associar (bind) o socket UDP ao endereço local
     if (bind(udp_socket_internal, (struct sockaddr*)&local_udp_addr, sizeof(local_udp_addr)) < 0) {
-        perror("[PowerUDP Error] bind UDP");
+        perror("[PowerUDP Error] bind UDP"); // O erro que você estava a ver acontecia aqui
         close(server_tcp_socket); server_tcp_socket = -1;
         close(udp_socket_internal); udp_socket_internal = -1;
         return -1;
     }
-    printf("[PowerUDP] Escutando por mensagens PowerUDP na porta %d (UDP).\n", POWER_UDP_PORT_CLIENT);
+
+    // MODIFICAÇÃO CRÍTICA: Obter e imprimir a porta UDP atribuída dinamicamente
+    socklen_t addr_len = sizeof(local_udp_addr);
+    if (getsockname(udp_socket_internal, (struct sockaddr*)&local_udp_addr, &addr_len) == -1) {
+        perror("[PowerUDP Error] getsockname UDP");
+        close(server_tcp_socket); server_tcp_socket = -1;
+        close(udp_socket_internal); udp_socket_internal = -1;
+        return -1;
+    }
+    // MODIFICAÇÃO CRÍTICA: Imprimir a porta real que foi atribuída
+    printf("[PowerUDP] Escutando por mensagens PowerUDP na porta %d (UDP).\n", ntohs(local_udp_addr.sin_port));
+
 
     // 3. Configurar socket Multicast para receber configurações
     multicast_socket = socket(AF_INET, SOCK_DGRAM, 0); // Criar socket UDP para multicast
     if (multicast_socket < 0) {
         perror("[PowerUDP Error] socket multicast");
         close(server_tcp_socket); server_tcp_socket = -1;
-        close(udp_socket_internal); udp_socket_internal = -1;
+        if (udp_socket_internal != -1) { close(udp_socket_internal); udp_socket_internal = -1; }
         return -1;
     }
-    int reuse = 1; // Permitir reutilização do endereço (SO_REUSEADDR)
+
+    int reuse = 1; // Flag para ativar a reutilização
+
+    // Tentar configurar SO_REUSEADDR (importante para multicast e para reutilizar portas em TIME_WAIT)
     if (setsockopt(multicast_socket, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse)) < 0) {
         perror("[PowerUDP Warning] setsockopt SO_REUSEADDR multicast failed");
-        // Não é fatal, mas pode causar problemas se a porta estiver em TIME_WAIT
+        // Continuar mesmo que falhe, mas pode haver problemas.
     }
+
+    // MODIFICAÇÃO: Tentar configurar SO_REUSEPORT
+    // SO_REUSEPORT permite que múltiplos sockets façam bind ao mesmo endereço e porta.
+    // Envolvido com #ifdef para portabilidade, caso a macro não esteja definida no sistema.
+#ifdef SO_REUSEPORT
+    if (setsockopt(multicast_socket, SOL_SOCKET, SO_REUSEPORT, (char *)&reuse, sizeof(reuse)) < 0) {
+        perror("[PowerUDP Warning] setsockopt SO_REUSEPORT multicast failed (pode ser normal se não suportado pelo SO)");
+        // Continuar mesmo que falhe. SO_REUSEADDR ainda pode ser suficiente.
+    }
+#else
+    // Opcional: Imprimir um aviso se SO_REUSEPORT não estiver definido durante a compilação
+    // printf("[PowerUDP Info] SO_REUSEPORT não definido no momento da compilação.\n");
+#endif
+
     struct sockaddr_in multicast_addr_bind; // Endereço para fazer bind do socket multicast
     memset(&multicast_addr_bind, 0, sizeof(multicast_addr_bind));
     multicast_addr_bind.sin_family = AF_INET;
-    multicast_addr_bind.sin_addr.s_addr = htonl(INADDR_ANY); // Escutar em todas as interfaces para multicast
-    multicast_addr_bind.sin_port = htons(MULTICAST_PORT);    // Porta multicast definida
+    // Para sockets multicast de escuta, é comum fazer bind a INADDR_ANY
+    // e depois juntar-se ao grupo multicast específico.
+    multicast_addr_bind.sin_addr.s_addr = htonl(INADDR_ANY);
+    multicast_addr_bind.sin_port = htons(MULTICAST_PORT); // Porta multicast definida (ex: 8002)
 
     // Associar (bind) o socket multicast ao endereço
     if (bind(multicast_socket, (struct sockaddr*)&multicast_addr_bind, sizeof(multicast_addr_bind)) < 0) {
         perror("[PowerUDP Error] bind multicast");
         close(server_tcp_socket); server_tcp_socket = -1;
-        close(udp_socket_internal); udp_socket_internal = -1;
+        if (udp_socket_internal != -1) { close(udp_socket_internal); udp_socket_internal = -1; }
         close(multicast_socket); multicast_socket = -1;
         return -1;
     }
@@ -371,200 +395,208 @@ int request_protocol_config(int enable_retransmission, int enable_backoff, int e
 }
 
 // Envia uma mensagem usando o protocolo PowerUDP
-int send_message(const char *destination_ip, const char *message, int len) {
-    if (!protocol_initialized || udp_socket_internal < 0) { // Verificar inicialização
+int send_message(const char *destination, const char *message, int len) {
+    if (!protocol_initialized || udp_socket_internal < 0) {
         fprintf(stderr, "[PowerUDP Error] Protocolo não inicializado para send_message.\n");
-        return -2; // Código de erro especial para não inicializado
+        return -2;
     }
-    if (len <= 0 || len > MAX_PAYLOAD_SIZE) { // Validar tamanho da mensagem
+    if (len <= 0 || len > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "[PowerUDP Error] Tamanho da mensagem inválido (%d). Max: %d.\n", len, MAX_PAYLOAD_SIZE);
         return -1;
     }
 
-    power_udp_packet_t packet_to_send; // Pacote PowerUDP a ser enviado
-    memset(&packet_to_send, 0, sizeof(packet_to_send)); // Limpar pacote
+    char dest_ip_str[INET_ADDRSTRLEN]; // Buffer para o IP extraído
+    int destination_port_val = POWER_UDP_PORT_CLIENT; // Porta padrão como fallback
 
-    // Preparar cabeçalho do pacote (todos os campos em network byte order antes do envio)
+    // Copiar a string de destino para poder modificá-la com strtok ou sscanf
+    char dest_copy[256]; // Ajuste o tamanho conforme necessário (IP:PORTA)
+    strncpy(dest_copy, destination, sizeof(dest_copy) - 1);
+    dest_copy[sizeof(dest_copy) - 1] = '\0';
+
+    char *port_str_ptr = strrchr(dest_copy, ':'); // Procurar o último ':' (para IPv6 ou casos com múltiplos ':')
+
+    if (port_str_ptr != NULL) {
+        // Encontrou ':', então assumimos formato IP:PORTA
+        *port_str_ptr = '\0'; // Terminar a string do IP no lugar do ':'
+        strncpy(dest_ip_str, dest_copy, INET_ADDRSTRLEN -1);
+        dest_ip_str[INET_ADDRSTRLEN-1] = '\0';
+
+        char *actual_port_str = port_str_ptr + 1;
+        if (strlen(actual_port_str) > 0) {
+            int parsed_port = atoi(actual_port_str);
+            if (parsed_port > 0 && parsed_port <= 65535) {
+                destination_port_val = parsed_port;
+            } else {
+                fprintf(stderr, "[PowerUDP Error] Porta inválida na string de destino '%s'. Usando porta padrão %d.\n", destination, POWER_UDP_PORT_CLIENT);
+                // Poderia retornar erro aqui se a porta for obrigatória
+                // return -1; // Se a porta for obrigatória e inválida
+            }
+        } else {
+             fprintf(stderr, "[PowerUDP Error] String de porta vazia em '%s'. Usando porta padrão %d.\n", destination, POWER_UDP_PORT_CLIENT);
+        }
+    } else {
+        // Não encontrou ':', então assumimos que 'destination' é apenas o IP
+        // e usamos a porta padrão POWER_UDP_PORT_CLIENT (8001)
+        // Para o seu caso, isto NÃO funcionará para contactar clientes em portas efémeras.
+        // É crucial que a string "destination" contenha a porta efémera.
+        strncpy(dest_ip_str, dest_copy, INET_ADDRSTRLEN-1);
+        dest_ip_str[INET_ADDRSTRLEN-1] = '\0';
+        // destination_port_val já é POWER_UDP_PORT_CLIENT
+        fprintf(stderr, "[PowerUDP Warning] Porta não especificada em '%s'. Para contactar clientes em portas dinâmicas, use 'IP:PORTA'. Usando porta padrão %d.\n", destination, destination_port_val);
+    }
+
+    power_udp_packet_t packet_to_send;
+    memset(&packet_to_send, 0, sizeof(packet_to_send));
+
     packet_to_send.header.sequence_number = htonl(internal_power_udp_state.current_send_sequence_number);
-    packet_to_send.header.type = PACKET_TYPE_DATA; // Este é um pacote de dados
-    packet_to_send.header.data_length = htons((uint16_t)len); // Comprimento dos dados
-    memcpy(packet_to_send.payload, message, len); // Copiar dados da aplicação para o payload
+    packet_to_send.header.type = PACKET_TYPE_DATA;
+    packet_to_send.header.data_length = htons((uint16_t)len);
+    memcpy(packet_to_send.payload, message, len);
 
-    // Preparar endereço de destino UDP
     struct sockaddr_in dest_addr_udp;
     memset(&dest_addr_udp, 0, sizeof(dest_addr_udp));
     dest_addr_udp.sin_family = AF_INET;
-    dest_addr_udp.sin_port = htons(POWER_UDP_PORT_CLIENT); // Porta de destino é a porta padrão do cliente PowerUDP
-    if (inet_pton(AF_INET, destination_ip, &dest_addr_udp.sin_addr) <= 0) { // Converter IP de destino
+    dest_addr_udp.sin_port = htons((uint16_t)destination_port_val);
+
+    if (inet_pton(AF_INET, dest_ip_str, &dest_addr_udp.sin_addr) <= 0) {
         perror("[PowerUDP Error] inet_pton para destino UDP em send_message");
+        fprintf(stderr, "[PowerUDP Error Detail] IP problemático: '%s'\n", dest_ip_str);
         return -1;
     }
 
-    int attempts = 0; // Contador de tentativas de envio
-    long current_timeout_ms_calc; // Timeout calculado para a tentativa atual
-    struct timeval tv_select; // Estrutura de timeout para select()
-    fd_set read_fds;          // Conjunto de descritores de ficheiro para select()
+    // ... (Resto da lógica de send_message: attempts, timeout, envio, espera por ACK)
+    // Lembre-se de usar dest_ip_str e destination_port_val nos seus printfs de depuração
+    // Exemplo:
+    // if (sendto(...) < 0 ) { ... }
+    // printf("[PowerUDP] Pacote DATA (seq %u, %zd bytes) enviado para %s:%d (tentativa %d).\n",
+    //        ntohl(packet_to_send.header.sequence_number), bytes_sent, dest_ip_str, destination_port_val, attempts);
 
-    // Resetar estatísticas para esta tentativa de mensagem
-    stats_are_valid_internal = 1; // Marcar que uma tentativa está a ser feita
+
+    // Esta é uma versão simplificada da lógica de retransmissão/ACK.
+    // Adapte conforme a sua lógica completa de retransmissão e ACK.
+    int attempts = 0;
+    long current_timeout_ms_calc;
+    struct timeval tv_select;
+    fd_set read_fds;
+
+    stats_are_valid_internal = 1;
     last_msg_retransmissions = 0;
-    last_msg_delivery_time_ms = -1; // Será atualizado no sucesso ou falha final
+    last_msg_delivery_time_ms = -1;
     last_msg_attempt_successful = 0;
 
-    struct timeval time_start_send, time_end_send; // Para calcular o tempo de entrega
-    gettimeofday(&time_start_send, NULL); // Registar tempo de início da operação de envio
+    struct timeval time_start_send, time_end_send;
+    gettimeofday(&time_start_send, NULL);
 
-    // Loop para enviar e potencialmente retransmitir
-    // Loop enquanto attempts <= max_retries. Se max_retries for 0, uma tentativa. Se 3, então 0,1,2,3 (4 tentativas no total)
     while (attempts <= internal_power_udp_state.max_retries) {
-        // Simular perda de pacotes se ativado
         if (internal_power_udp_state.packet_loss_probability > 0 && (rand() % 100) < internal_power_udp_state.packet_loss_probability) {
             printf("[PowerUDP SIMULATE] Pacote DATA (seq %u) para %s:%d PERDIDO intencionalmente (tentativa %d).\n",
-                   ntohl(packet_to_send.header.sequence_number), destination_ip, POWER_UDP_PORT_CLIENT, attempts);
+                   ntohl(packet_to_send.header.sequence_number), dest_ip_str, destination_port_val, attempts);
         } else {
-            // Envio real do pacote
             ssize_t bytes_sent = sendto(udp_socket_internal, &packet_to_send, sizeof(power_udp_header_t) + len, 0,
                                     (struct sockaddr*)&dest_addr_udp, sizeof(dest_addr_udp));
-            if (bytes_sent < 0) { // Erro no sendto
+            if (bytes_sent < 0) {
                 perror("[PowerUDP Error] sendto data packet");
-                last_msg_attempt_successful = 0; // Marcar como falha
+                last_msg_attempt_successful = 0;
                 gettimeofday(&time_end_send, NULL);
                 last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 +
                                             (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
                 return -1;
             }
             printf("[PowerUDP] Pacote DATA (seq %u, %zd bytes) enviado para %s:%d (tentativa %d).\n",
-                   ntohl(packet_to_send.header.sequence_number), bytes_sent, destination_ip, POWER_UDP_PORT_CLIENT, attempts);
+                   ntohl(packet_to_send.header.sequence_number), bytes_sent, dest_ip_str, destination_port_val, attempts);
         }
 
-        // Se retransmissões estão desativadas, não esperamos por ACK
         if (!internal_power_udp_state.retransmission_enabled) {
-            internal_power_udp_state.current_send_sequence_number++; // Incrementar número de sequência para próxima mensagem
+            internal_power_udp_state.current_send_sequence_number++;
             last_msg_retransmissions = attempts;
-            last_msg_attempt_successful = 1; // Assumir sucesso se não há retransmissão
+            last_msg_attempt_successful = 1;
             gettimeofday(&time_end_send, NULL);
             last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 +
                                             (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
-            return len; // Devolver número de bytes de payload enviados
+            return len;
         }
 
-        // Calcular timeout para esta tentativa (backoff exponencial se ativado)
-        if (internal_power_udp_state.backoff_enabled && attempts > 0) { // Sem backoff para a primeira tentativa (attempts = 0)
-            // Tn = Tmin * 2^n (n=attempts aqui, pois attempts começa em 0 para a 1ª transmissão, 1 para a 1ª retransmissão, etc.)
-            // Se attempts = 0 (primeira tentativa), Tmin.
-            // Se attempts = 1 (primeira retransmissão), Tmin * 2.
-            // Assim, para a retransmissão 'k' (onde k=attempts > 0), o multiplicador é 2^k.
-            // No entanto, a fórmula do PDF é Tn = Tmin * 2^n, onde n é "número de tentativas de transmissão falhadas".
-            // Se attempts é o número total de envios (0 para o primeiro, 1 para o segundo, etc.),
-            // então 'n' (falhas) seria 'attempts' se a primeira tentativa (attempts=0) for a base.
-            // Ou 'attempts - 1' se n=0 é a primeira tentativa e n=1 é a primeira retransmissão.
-            // A lógica aqui é: attempts=0 -> Tmin; attempts=1 -> Tmin*2; attempts=2 -> Tmin*4
+        // Lógica de timeout e select (igual à versão anterior, não precisa mudar aqui)
+        if (internal_power_udp_state.backoff_enabled && attempts > 0) {
             current_timeout_ms_calc = internal_power_udp_state.base_timeout_ms * (1L << (attempts));
         } else {
             current_timeout_ms_calc = internal_power_udp_state.base_timeout_ms;
         }
-        // Limitar timeout a um máximo razoável, ex: 60 segundos
-        // if (current_timeout_ms_calc > 60000) current_timeout_ms_calc = 60000;
-
         tv_select.tv_sec = current_timeout_ms_calc / 1000;
         tv_select.tv_usec = (current_timeout_ms_calc % 1000) * 1000;
 
-        FD_ZERO(&read_fds); // Limpar conjunto de descritores
-        FD_SET(udp_socket_internal, &read_fds); // Adicionar socket UDP ao conjunto para esperar por ACK
+        FD_ZERO(&read_fds);
+        FD_SET(udp_socket_internal, &read_fds);
 
-        printf("[PowerUDP] Esperando por ACK (seq %u) durante %ld ms...\n", ntohl(packet_to_send.header.sequence_number), current_timeout_ms_calc);
-        // Usar select() para esperar por dados no socket com timeout
+        printf("[PowerUDP] Esperando por ACK (seq %u) de %s:%d durante %ld ms...\n", ntohl(packet_to_send.header.sequence_number), dest_ip_str, destination_port_val, current_timeout_ms_calc);
         int ret_select = select(udp_socket_internal + 1, &read_fds, NULL, NULL, &tv_select);
 
-        if (ret_select < 0) { // Erro no select()
-            if (errno == EINTR) { // Interrompido por um sinal
-                printf("[PowerUDP] select() interrompido. Retentando envio/espera.\n");
-                // Não incrementar tentativas, apenas tentar select novamente ou o envio.
-                continue;
-            }
+        if (ret_select < 0) { /* ... (erro no select) ... */
+            if (errno == EINTR) { continue; }
             perror("[PowerUDP Error] select_on_ack");
             last_msg_attempt_successful = 0;
-            gettimeofday(&time_end_send, NULL); // Atualizar tempo antes de retornar
-            last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 +
-                                            (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
-            return -1; // Erro geral
-        } else if (ret_select == 0) { // Timeout do select()
+            gettimeofday(&time_end_send, NULL);
+            last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 + (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
+            return -1;
+        } else if (ret_select == 0) { /* ... (timeout) ... */
             printf("[PowerUDP] Timeout esperando por ACK (seq %u).\n", ntohl(packet_to_send.header.sequence_number));
-            attempts++; // Incrementar contador de tentativas
+            attempts++;
             last_msg_retransmissions = attempts;
-            // Loop para retransmitir se attempts <= max_retries
             continue;
-        } else { // Dados disponíveis no socket
-            if (FD_ISSET(udp_socket_internal, &read_fds)) { // Verificar se é o nosso socket UDP
-                power_udp_packet_t ack_packet; // Pacote para guardar o ACK/NAK recebido
-                struct sockaddr_in ack_sender_addr; // Endereço do remetente do ACK/NAK
+        } else { /* ... (dados disponíveis, verificar ACK/NAK) ... */
+            if (FD_ISSET(udp_socket_internal, &read_fds)) {
+                power_udp_packet_t ack_packet;
+                struct sockaddr_in ack_sender_addr;
                 socklen_t ack_sender_addr_len = sizeof(ack_sender_addr);
-
-                // Esperamos um ACK ou NAK. Também pode ser dados para receive_message().
-                // Este modelo simples processa um pacote de entrada aqui.
                 ssize_t bytes_recv_ack = recvfrom(udp_socket_internal, &ack_packet, sizeof(ack_packet), 0,
                                                  (struct sockaddr*)&ack_sender_addr, &ack_sender_addr_len);
 
-                if (bytes_recv_ack < 0) { // Erro ao receber ACK/NAK
-                    if (errno == EINTR) continue; // Interrompido, tentar select novamente
+                if (bytes_recv_ack < 0) {
+                    if (errno == EINTR) continue;
                     perror("[PowerUDP Error] recvfrom_ack");
-                    // Erro durante receção do ACK. Tratar como timeout para esta tentativa.
-                    attempts++;
-                    last_msg_retransmissions = attempts;
-                    continue;
+                    attempts++; last_msg_retransmissions = attempts; continue;
                 }
+                if (bytes_recv_ack >= (ssize_t)sizeof(power_udp_header_t) &&
+                    (ack_packet.header.type == PACKET_TYPE_ACK || ack_packet.header.type == PACKET_TYPE_NAK) &&
+                    ntohl(ack_packet.header.sequence_number) == ntohl(packet_to_send.header.sequence_number) &&
+                    ack_sender_addr.sin_addr.s_addr == dest_addr_udp.sin_addr.s_addr && // Verificar se o ACK veio do destino esperado
+                    ack_sender_addr.sin_port == dest_addr_udp.sin_port) {
 
-                // Verificar se é um ACK/NAK válido para o pacote enviado
-                if (bytes_recv_ack >= (ssize_t)sizeof(power_udp_header_t) && // Tamanho mínimo do cabeçalho
-                    (ack_packet.header.type == PACKET_TYPE_ACK || ack_packet.header.type == PACKET_TYPE_NAK) && // Tipo ACK ou NAK
-                    ntohl(ack_packet.header.sequence_number) == ntohl(packet_to_send.header.sequence_number)) { // Número de sequência corresponde
-
-                    if (ack_packet.header.type == PACKET_TYPE_ACK) { // ACK recebido
-                        printf("[PowerUDP] ACK (seq %u) recebido de %s:%d.\n",
-                               ntohl(ack_packet.header.sequence_number),
-                               inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port));
-
-                        internal_power_udp_state.current_send_sequence_number++; // Incrementar para próxima mensagem
+                    if (ack_packet.header.type == PACKET_TYPE_ACK) {
+                        printf("[PowerUDP] ACK (seq %u) recebido de %s:%d.\n", ntohl(ack_packet.header.sequence_number), inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port));
+                        internal_power_udp_state.current_send_sequence_number++;
                         last_msg_retransmissions = attempts;
-                        last_msg_attempt_successful = 1; // Marcar como sucesso
-                        gettimeofday(&time_end_send, NULL); // Calcular tempo de entrega
-                        last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 +
-                                                        (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
-                        return len; // Sucesso!
-                    } else { // PACKET_TYPE_NAK recebido
-                         printf("[PowerUDP] NAK (seq %u) recebido de %s:%d. Tratando como falha para esta tentativa.\n",
-                                ntohl(ack_packet.header.sequence_number),
-                                inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port));
-                        attempts++; // Incrementar tentativas
-                        last_msg_retransmissions = attempts;
-                        // Loop para retransmitir se attempts <= max_retries
-                        continue;
+                        last_msg_attempt_successful = 1;
+                        gettimeofday(&time_end_send, NULL);
+                        last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 + (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
+                        return len;
+                    } else { // NAK
+                        printf("[PowerUDP] NAK (seq %u) recebido de %s:%d. Tratando como falha para esta tentativa.\n", ntohl(ack_packet.header.sequence_number), inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port));
+                        attempts++; last_msg_retransmissions = attempts; continue;
                     }
-                } else { // Recebido algo inesperado (ex: pacote de dados, ACK/NAK antigo)
-                    // Simplificação: ignorar e deixar o select dar timeout eventualmente.
-                    // Um sistema mais robusto poderia guardar pacotes de dados inesperados.
-                    if (bytes_recv_ack >= (ssize_t)sizeof(power_udp_header_t)) {
-                        printf("[PowerUDP] Pacote UDP inesperado (type %d, seq %u, size %zd) recebido enquanto esperava por ACK/NAK para seq %u. Ignorando.\n",
-                               ack_packet.header.type, ntohl(ack_packet.header.sequence_number), bytes_recv_ack, ntohl(packet_to_send.header.sequence_number));
-                    } else if (bytes_recv_ack > 0) { // Pacote muito curto
-                         printf("[PowerUDP] Pacote UDP muito curto (%zd bytes) recebido enquanto esperava por ACK/NAK. Ignorando.\n", bytes_recv_ack);
+                } else {
+                     if (bytes_recv_ack >= (ssize_t)sizeof(power_udp_header_t)) {
+                         printf("[PowerUDP] Pacote UDP inesperado (type %d, seq %u, de %s:%d) recebido enquanto esperava por ACK/NAK de %s:%d para seq %u. Ignorando.\n",
+                               ack_packet.header.type, ntohl(ack_packet.header.sequence_number),
+                               inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port),
+                               dest_ip_str, destination_port_val,
+                               ntohl(packet_to_send.header.sequence_number));
+                    } else if (bytes_recv_ack > 0) {
+                         printf("[PowerUDP] Pacote UDP muito curto (%zd bytes) recebido. Ignorando.\n", bytes_recv_ack);
                     }
-                    // Deixar o select dar timeout para a tentativa atual.
-                    // Não é ideal, pois pode atrasar o processamento do ACK se chegar logo após este pacote inesperado.
-                    // Um loop recvfrom não bloqueante após o select seria melhor.
                 }
             }
         }
-    }
+    } // fim do while(attempts)
 
-    // Se o loop terminar, todas as retransmissões falharam
-    printf("[PowerUDP Error] Falha ao enviar mensagem (seq %u) após %d tentativas (max_retries: %d).\n",
-           ntohl(packet_to_send.header.sequence_number), attempts, internal_power_udp_state.max_retries);
-    last_msg_attempt_successful = 0; // Marcar como falha
-    gettimeofday(&time_end_send, NULL); // Registar tempo mesmo em falha
+
+    printf("[PowerUDP Error] Falha ao enviar mensagem (seq %u) para %s:%d após %d tentativas.\n",
+           ntohl(packet_to_send.header.sequence_number), dest_ip_str, destination_port_val, attempts);
+    last_msg_attempt_successful = 0;
+    gettimeofday(&time_end_send, NULL);
     last_msg_delivery_time_ms = (time_end_send.tv_sec - time_start_send.tv_sec) * 1000 +
                                     (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
-    return -1; // Erro geral indicando falha após retransmissões
+    return -1;
 }
 
 // Recebe uma mensagem usando o protocolo PowerUDP

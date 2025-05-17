@@ -37,7 +37,7 @@ void* power_udp_receiver_thread_func(void* arg) {
         if (bytes_received > 0) {
             recv_buffer[bytes_received] = '\0';
             // Não temos mais o IP/Porta do remetente diretamente de receive_message
-            printf("\n<Mensagem Recebida> %s\n> ", recv_buffer);
+            printf("\n\033[32m<Mensagem Recebida> %s\033[0m\n> ", recv_buffer);
             fflush(stdout);
         } else if (bytes_received == 0) {
             printf("[Cliente RX Thread] receive_message retornou 0. A thread vai terminar.\n");
@@ -63,7 +63,7 @@ void print_usage(const char* prog_name) {
 void print_commands() {
     printf("\nComandos disponíveis:\n");
     // Comando send MODIFICADO (sem porta de destino explícita, assume-se porta PowerUDP padrão)
-    printf("  send <IP_Destino> <mensagem> - Envia uma mensagem PowerUDP (para a porta PowerUDP padrão)\n");
+    printf("  send <IP_Destino:Porta_Destino> <mensagem> - Envia uma mensagem PowerUDP\n");
     printf("  config <retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries> - Pede alteração de config\n");
     printf("  stats - Mostra estatísticas da última mensagem enviada\n");
     printf("  loss <probabilidade_percentual> - Simula perda de pacotes (0-100)\n");
@@ -130,32 +130,38 @@ int main(int argc, char *argv[]) {
 			print_commands();
 		}
         else if (strcmp(command, "send") == 0) {
-            // Formato: send <IP_Destino> <mensagem>
-            char* dest_ip_str = strtok(input_line + strlen(command) + 1, " ");
-            char* msg_start = strtok(NULL, ""); // Resto da linha
+            // Formato: send <IP_Destino:Porta_Destino> <mensagem>
+            // O primeiro argumento após "send" é a string "IP:PORTA"
+            char* destination_str = strtok(input_line + strlen(command) + 1, " "); // Obtém "IP:PORTA"
+            char* msg_start = strtok(NULL, ""); // Resto da linha é a mensagem
 
-            if (dest_ip_str && msg_start && strlen(msg_start) > 0) {
+            if (destination_str && msg_start && strlen(msg_start) > 0) {
                 if (strlen(msg_start) > MAX_MESSAGE_USER -1) {
-                     printf("Mensagem demasiado longa (max %d caracteres).\n", MAX_MESSAGE_USER-1);
+                    printf("Mensagem demasiado longa (max %d caracteres).\n", MAX_MESSAGE_USER-1);
                 } else {
                     strncpy(message_payload, msg_start, MAX_MESSAGE_USER -1);
                     message_payload[MAX_MESSAGE_USER-1] = '\0';
-                    printf("[Cliente] A enviar \"%s\" para %s (porta PowerUDP padrão %d)...\n", message_payload, dest_ip_str, POWER_UDP_PORT_CLIENT);
-                    // Chamada a send_message
-                    int bytes_sent = send_message(dest_ip_str, message_payload, strlen(message_payload));
+
+                    // A string destination_str (que contém IP:PORTA) é passada diretamente
+                    printf("[Cliente] A enviar \"%s\" para %s...\n", message_payload, destination_str);
+
+                    // Chamada a send_message (assinatura original)
+                    int bytes_sent = send_message(destination_str, message_payload, strlen(message_payload));
+
                     if (bytes_sent > 0) {
                         printf("[Cliente] Mensagem enviada com sucesso (%d bytes).\n", bytes_sent);
                     } else if (bytes_sent == -1) {
-                        printf("[Cliente Error] Falha ao enviar mensagem após todas as tentativas.\n");
+                        printf("[Cliente Error] Falha ao enviar mensagem após todas as tentativas (verifique formato IP:PORTA e alcançabilidade).\n");
                     } else if (bytes_sent == -2) {
                         printf("[Cliente Error] Protocolo não inicializado (erro interno?).\n");
                     } else {
-                         printf("[Cliente Error] Erro desconhecido ao enviar mensagem (%d).\n", bytes_sent);
+                        printf("[Cliente Error] Erro desconhecido ao enviar mensagem (%d).\n", bytes_sent);
                     }
                 }
             } else {
-                printf("Uso: send <IP_Destino> <mensagem>\n");
+                printf("Uso: send <IP_Destino:Porta_Destino> <mensagem>\n");
             }
+
         } else if (strcmp(command, "config") == 0) {
             int retrans, backoff, seq, timeout, retries_val;
             if (sscanf(input_line, "%*s %d %d %d %d %d", &retrans, &backoff, &seq, &timeout, &retries_val) == 5) {
