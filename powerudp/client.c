@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE // Added to make usleep available
+#define _DEFAULT_SOURCE // para o usleep
 #include "msg_structs.h"
 #include "powerudp.h"
 
@@ -7,32 +7,54 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <sys/socket.h> // Para sockaddr_in
-#include <netinet/in.h> // Para sockaddr_in
-#include <arpa/inet.h>  // Para inet_ntoa
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <signal.h>
 
 #define MAX_INPUT_LINE 2048
-#define MAX_MESSAGE_USER 1000 // Payload da mensagem do utilizador
+#define MAX_MESSAGE_USER 1000 // tamanho maximo do payload de uma mensagem
 
-// Variável global para controlar a execução da thread de receção
+// variável global para controlar a execução da thread de receção
+pthread_t receiver_thread_id;
 volatile int keep_receiver_thread_running = 0;
+volatile sig_atomic_t sigint_received = 0; // flag para o sigint
 
-// Função para a thread que recebe mensagens PowerUDP
+// handler
+void handle_sigint(int sig)
+{
+    (void)sig; // parametro nao usado
+    printf("\n[Cliente] SIGINT recebido. A terminar...\n");
+    sigint_received = 1;
+    // terminar a thread de receção e fechar o protocolo
+    if (keep_receiver_thread_running)
+    {
+        keep_receiver_thread_running = 0;
+    }
+    close_protocol();
+    printf("[Cliente] Todos os recursos foram limpos.\n");
+    exit(0);
+}
+
+// função para a thread que recebe mensagens PowerUDP
 void *power_udp_receiver_thread_func(void *arg)
 {
     (void)arg;
     char recv_buffer[MAX_PAYLOAD_SIZE + 1];
     int bytes_received;
-    // struct sockaddr_in sender_addr; // Não mais preenchido por receive_message
-    // socklen_t sender_addr_len = sizeof(sender_addr);
+    char sender_ip[INET_ADDRSTRLEN]; // Buffer for sender's IP string
+    uint16_t sender_port;            // For sender's port
 
-    printf("[Cliente RX Thread] Pronta para receber mensagens PowerUDP.\n");
+    printf("[Cliente RX Thread] À escuta por novas mensagens PowerUDP.\n");
 
     while (keep_receiver_thread_running)
     {
         memset(recv_buffer, 0, sizeof(recv_buffer));
-        // Chamada a receive_message MODIFICADA
-        bytes_received = receive_message(recv_buffer, MAX_PAYLOAD_SIZE);
+        sender_ip[0] = '\0'; // inicializar buffer do ip do remetente
+        sender_port = 0;     // inicializar porta do remetente
+
+        // aguardar por mensagens
+        bytes_received = receive_message(recv_buffer, MAX_PAYLOAD_SIZE, sender_ip, INET_ADDRSTRLEN, &sender_port);
 
         if (!keep_receiver_thread_running)
             break;
@@ -40,8 +62,15 @@ void *power_udp_receiver_thread_func(void *arg)
         if (bytes_received > 0)
         {
             recv_buffer[bytes_received] = '\0';
-            // Não temos mais o IP/Porta do remetente diretamente de receive_message
-            printf("\n<Mensagem Recebida> %s\n> ", recv_buffer);
+
+            if (sender_ip[0] != '\0' && sender_port != 0)
+            {
+                printf("\n<Mensagem Recebida de %s:%u> %s\n> ", sender_ip, sender_port, recv_buffer);
+            }
+            else
+            {
+                printf("\n<Mensagem Recebida> %s\n> ", recv_buffer); // failsafe caso não haja IP/Porta
+            }
             fflush(stdout);
         }
         else if (bytes_received == 0)
@@ -61,18 +90,14 @@ void *power_udp_receiver_thread_func(void *arg)
 
 void print_usage(const char *prog_name)
 {
-    // Argumentos MODIFICADOS para init_protocol
     printf("Uso: %s <IP_Servidor_Config> <Porta_TCP_Servidor_Config> [PSK]\n", prog_name);
     printf("  PSK (opcional): Chave pré-partilhada. Padrão: \"%s\"\n", PSK_DEFAULT);
-    // A porta UDP local do cliente e detalhes do multicast são agora geridos internamente pela biblioteca PowerUDP
-    // usando constantes de protocol.h (POWER_UDP_PORT_CLIENT, MULTICAST_ADDRESS, MULTICAST_PORT)
     printf("Exemplo: %s 192.168.1.100 %d MySecurePSK\n", prog_name, SERVER_TCP_PORT);
 }
 
 void print_commands()
 {
     printf("\nComandos disponíveis:\n");
-    // Comando send MODIFICADO (sem porta de destino explícita, assume-se porta PowerUDP padrão)
     printf("  send <IP_Destino>:<Porta_Destino> <mensagem> - Envia uma mensagem PowerUDP\n");
     printf("  config <retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries> - Pede alteração de config\n");
     printf("  stats - Mostra estatísticas da última mensagem enviada\n");
@@ -85,12 +110,13 @@ void print_commands()
 
 int main(int argc, char *argv[])
 {
-    // Argumentos MODIFICADOS
     if (argc < 3 || argc > 4)
-    { // Progname + ServerIP + ServerPort (+ PSK opcional)
+    { // programa + ip do servidor + porta do servidor (+ PSK opcional)
         print_usage(argv[0]);
         return 1;
     }
+
+    signal(SIGINT, SIG_IGN); // ignorar sigint para prevenir termino inseguro do processo
 
     const char *server_ip = argv[1];
     int server_tcp_port = atoi(argv[2]);
@@ -98,12 +124,10 @@ int main(int argc, char *argv[])
 
     printf("[Cliente] A iniciar...\n");
     printf("  Servidor de Configuração: %s:%d\n", server_ip, server_tcp_port);
-    // A porta UDP local do cliente e multicast são geridas internamente por init_protocol
-    printf("  Porta UDP Cliente Local (PowerUDP): %d (padrão)\n", POWER_UDP_PORT_CLIENT);
+    printf("  Porta UDP Cliente (PowerUDP): %d\n", POWER_UDP_PORT_CLIENT);
     printf("  PSK: %s\n", psk);
-    printf("  Grupo Multicast Config: %s:%d (padrão)\n", MULTICAST_ADDRESS, MULTICAST_PORT);
+    printf("  Grupo Multicast: %s:%d\n", MULTICAST_ADDRESS, MULTICAST_PORT);
 
-    // Chamada a init_protocol+
     if (init_protocol(server_ip, server_tcp_port, psk) != 0)
     {
         fprintf(stderr, "[Cliente Error] Falha ao inicializar o protocolo PowerUDP.\n");
@@ -111,7 +135,6 @@ int main(int argc, char *argv[])
     }
     printf("[Cliente] Protocolo PowerUDP inicializado com sucesso.\n");
 
-    pthread_t receiver_thread_id;
     keep_receiver_thread_running = 1;
     if (pthread_create(&receiver_thread_id, NULL, power_udp_receiver_thread_func, NULL) != 0)
     {
@@ -125,6 +148,9 @@ int main(int argc, char *argv[])
     char message_payload[MAX_MESSAGE_USER];
 
     print_commands();
+
+    // tratar sigint apos inicio seguro
+    signal(SIGINT, handle_sigint);
 
     while (fgets(input_line, sizeof(input_line), stdin) != NULL)
     {
@@ -195,7 +221,7 @@ int main(int argc, char *argv[])
                         }
                         else if (bytes_sent == -2)
                         {
-                            printf("[Cliente Error] Protocolo não inicializado (erro interno?).\n");
+                            printf("[Cliente Error] Protocolo não inicializado.\n");
                         }
                         else
                         {
@@ -269,16 +295,14 @@ int main(int argc, char *argv[])
         printf("> ");
         fflush(stdout);
     }
-    // Terminar a thread de receção e fechar o protocolo
+    // terminar a thread de receção e fechar o protocolo
     if (keep_receiver_thread_running)
     {
         keep_receiver_thread_running = 0;
-        // A thread de receção pode estar bloqueada em receive_message.
-        // close_protocol() fechará o socket UDP, o que deve fazer receive_message retornar.
     }
     close_protocol();
     pthread_join(receiver_thread_id, NULL);
-    printf("[Cliente] Todos os recursos foram libertados. Adeus.\n");
+    printf("[Cliente] Todos os recursos foram limpos.\n");
 
     return 0;
 }

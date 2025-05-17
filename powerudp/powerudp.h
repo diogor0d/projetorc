@@ -15,7 +15,7 @@ int request_protocol_config(int enable_retransmission, int enable_backoff, int e
 int send_message(const char *destination_ip, int destination_port, const char *message, int len);
 
 // Recebe uma mensagem UDP
-int receive_message(char *buffer, int bufsize);
+int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_ip_str_len, uint16_t *sender_port);
 
 // Obtém estatísticas da última mensagem enviada
 int get_last_message_stats(int *retransmissions, int *delivery_time);

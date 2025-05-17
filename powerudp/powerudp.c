@@ -661,12 +661,21 @@ int send_message(const char *destination_ip, int destination_port, const char *m
 }
 
 // Recebe uma mensagem usando o protocolo PowerUDP
-int receive_message(char *buffer, int bufsize)
+int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_ip_str_len, uint16_t *sender_port)
 {
     if (!protocol_initialized || udp_socket_internal < 0)
     { // Verificar inicialização
         fprintf(stderr, "[PowerUDP Error] Protocolo não inicializado para receive_message.\n");
+        if (sender_ip_str && sender_ip_str_len > 0)
+            sender_ip_str[0] = '\0';
+        if (sender_port)
+            *sender_port = 0;
         return -2;
+    }
+    if (sender_ip_str == NULL || sender_ip_str_len <= 0 || sender_port == NULL)
+    {
+        fprintf(stderr, "[PowerUDP Error] Parâmetros inválidos para obter informações do remetente em receive_message.\n");
+        return -1; // Indicate an error due to bad parameters for sender info
     }
 
     power_udp_packet_t received_packet;     // Pacote PowerUDP recebido
@@ -676,7 +685,8 @@ int receive_message(char *buffer, int bufsize)
     while (protocol_initialized)
     {
         memset(&received_packet, 0, sizeof(received_packet));
-        current_addr_len = sizeof(current_sender_addr); // Reset for each call
+        current_addr_len = sizeof(current_sender_addr);               // Reset for each call
+        memset(&current_sender_addr, 0, sizeof(current_sender_addr)); // Clear sender_addr
 
         // Step 1: Peek at the incoming packet without removing it from the queue
         ssize_t bytes_peeked = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), MSG_PEEK,
@@ -721,6 +731,10 @@ int receive_message(char *buffer, int bufsize)
             // Consume the malformed/short packet to clear it from the OS queue
             char dummy_buffer[MAX_PAYLOAD_SIZE + sizeof(power_udp_header_t) + 100];           // Sufficiently large
             recvfrom(udp_socket_internal, dummy_buffer, sizeof(dummy_buffer), 0, NULL, NULL); // Consume
+            if (sender_ip_str && sender_ip_str_len > 0)
+                sender_ip_str[0] = '\0';
+            if (sender_port)
+                *sender_port = 0;
             continue;
         }
 
@@ -728,13 +742,22 @@ int receive_message(char *buffer, int bufsize)
         if (received_packet.header.type == PACKET_TYPE_DATA)
         {
             // It's a DATA packet. Now actually consume it from the queue.
-            current_addr_len = sizeof(current_sender_addr); // Reset for consuming read
+            // IMPORTANT: current_sender_addr is already populated by MSG_PEEK
+            // We need to ensure it's correctly passed if we re-call recvfrom for consumption
+            // For simplicity, we'll use the current_sender_addr from the PEEK.
+            // If PEEK and CONSUME calls could get different packets (highly unlikely for UDP on same socket fd immediately after PEEK),
+            // then current_sender_addr would need to be repopulated by the consuming recvfrom.
+
             ssize_t bytes_consumed = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), 0,
-                                              (struct sockaddr *)&current_sender_addr, &current_addr_len);
+                                              NULL, NULL); // Address already known from PEEK, don't need to get it again
 
             if (!protocol_initialized)
             { // Check again after potentially blocking call
                 printf("[PowerUDP] receive_message: Protocolo fechado após PEEK, durante consumo de DATA.\n");
+                if (sender_ip_str && sender_ip_str_len > 0)
+                    sender_ip_str[0] = '\0';
+                if (sender_port)
+                    *sender_port = 0;
                 return 0;
             }
 
@@ -852,8 +875,21 @@ int receive_message(char *buffer, int bufsize)
             {
                 memcpy(buffer, received_packet.payload, data_len);
                 buffer[data_len] = '\0'; // Ensure null termination for string payloads
+
+                // Populate sender IP and port
+                if (inet_ntop(AF_INET, &current_sender_addr.sin_addr, sender_ip_str, sender_ip_str_len) == NULL)
+                {
+                    perror("[PowerUDP Error] inet_ntop em receive_message");
+                    sender_ip_str[0] = '\0'; // Clear on error
+                }
+                *sender_port = ntohs(current_sender_addr.sin_port);
+
                 return data_len;
             }
+            if (sender_ip_str && sender_ip_str_len > 0)
+                sender_ip_str[0] = '\0'; // Clear if not accepted
+            if (sender_port)
+                *sender_port = 0;
             continue; // If not accepted, loop for next packet
             // --- END OF YOUR EXISTING PACKET_TYPE_DATA LOGIC ---
         }
@@ -876,6 +912,10 @@ int receive_message(char *buffer, int bufsize)
         }
     }
     printf("[PowerUDP] receive_message: Saindo do loop principal, protocolo não inicializado.\n");
+    if (sender_ip_str && sender_ip_str_len > 0)
+        sender_ip_str[0] = '\0';
+    if (sender_port)
+        *sender_port = 0;
     return 0; // Should only be reached if protocol_initialized becomes false
 }
 
