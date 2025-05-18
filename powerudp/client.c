@@ -253,7 +253,7 @@ int main(int argc, char *argv[])
                     int dest_port_int = atoi(dest_port_str);
                     if (dest_port_int <= 0 || dest_port_int > 65535)
                     {
-                        printf("Porta de destino inválida: %s\n", dest_port_str);
+                        printf("Porta de destino inválida: %s%s%s\n", YELLOW, dest_port_str, RESET);
                         continue;
                     }
 
@@ -265,7 +265,7 @@ int main(int argc, char *argv[])
                     {
                         strncpy(message_payload, msg_start, MAX_MESSAGE_USER - 1);
                         message_payload[MAX_MESSAGE_USER - 1] = '\0';
-                        printf("%s[Cliente]%s A enviar \"%s\" para %s:%d...\n", MAGENTA, RESET, message_payload, dest_ip_str, dest_port_int);
+                        printf("%s[Cliente]%s A enviar \"%s\" para %s%s:%d%s...\n", MAGENTA, RESET, message_payload, BLUE, dest_ip_str, dest_port_int, RESET);
                         // Chamada a send_message MODIFICADA
                         int bytes_sent = send_message(dest_ip_str, dest_port_int, message_payload, strlen(message_payload));
                         if (bytes_sent > 0)
@@ -322,19 +322,19 @@ int main(int argc, char *argv[])
             if (get_last_message_stats(&retransmissions_val, &delivery_time_val) == 0)
             {
                 printf("%s[Cliente]%s Estatísticas da última mensagem enviada:\n", MAGENTA ,RESET);
-                printf("  Retransmissões: %d\n", retransmissions_val);
+                printf("  Retransmissões: %s%d%s\n", YELLOW, retransmissions_val, RESET);
                 if (delivery_time_val >= 0)
                 {
-                    printf("  Tempo de Entrega: %d ms (Sucesso)\n", delivery_time_val);
+                    printf("  Tempo de Entrega: %s%d ms%s (Sucesso)%s\n", YELLOW, delivery_time_val, GREEN, RESET);
                 }
                 else
                 {
-                    printf("  Entrega Falhou (ou sem tentativa completa). Tempo registado: %d ms\n", delivery_time_val);
+                    printf("  %sEntrega Falhou (ou sem tentativa completa)%s. Tempo registado: %s%d ms%s\n", RED, RESET, YELLOW, delivery_time_val, RESET);
                 }
             }
             else
             {
-                printf("%s[Cliente]%s Nenhuma estatística disponível ou erro ao obter.\n", MAGENTA, RESET);
+                printf("%s[Cliente]%s Nenhuma estatística disponível ou erro ao obter.%s\n", MAGENTA, YELLOW, RESET);
             }
         }
         else if (strcmp(command, "loss") == 0)

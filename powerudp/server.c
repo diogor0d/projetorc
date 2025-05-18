@@ -78,8 +78,8 @@ void broadcast_shutdown_signal_multicast()
     }
     else
     {
-        printf(SERVER_LOG_PREFIX "Sinal de shutdown difundido via multicast para %s:%d.\n",
-               inet_ntoa(multicast_addr_send.sin_addr), ntohs(multicast_addr_send.sin_port));
+        printf(SERVER_LOG_PREFIX "Sinal de shutdown difundido via multicast para %s%s:%d%s.\n",
+               BLUE, inet_ntoa(multicast_addr_send.sin_addr), ntohs(multicast_addr_send.sin_port), RESET);
     }
 }
 
@@ -243,7 +243,7 @@ void *client_handler_thread(void *arg)
     {
         if (bytes_received == 0)
         {
-            printf(SERVER_LOG_PREFIX "Cliente %s:%d desconectou-se antes do registo.\n", inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port));
+            printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s desconectou-se antes do registo.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
         }
         else
         {
@@ -292,7 +292,7 @@ void *client_handler_thread(void *arg)
         {
             if (bytes_received == 0)
             {
-                printf(SERVER_LOG_PREFIX "Cliente %s:%d desconectou-se.\n", inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port));
+                printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s desconectou-se.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
             }
             else
             {
@@ -304,7 +304,7 @@ void *client_handler_thread(void *arg)
         if (bytes_received == sizeof(ConfigMessage))
         {                                                         // Correct: sizeof(ConfigMessage)
             ConfigMessage *req_cfg_msg = (ConfigMessage *)buffer; // Correct: Use typedef 'ConfigMessage'
-            printf(SERVER_LOG_PREFIX "Recebido pedido de alteração de configuração de %s:%d.\n", inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port));
+            printf(SERVER_LOG_PREFIX "Recebido pedido de alteração de configuração de %s%s:%d%s.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
 
             pthread_mutex_lock(&config_mutex);
             // Update global configuration.
@@ -330,15 +330,15 @@ void *client_handler_thread(void *arg)
         }
         else
         {
-            fprintf(stderr, SERVER_LOG_PREFIX "Recebida mensagem TCP de %s:%d com tamanho inesperado (%zd bytes) para ConfigMessage.\n",
-                    inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), bytes_received);
+            fprintf(stderr, SERVER_LOG_PREFIX "Recebida mensagem TCP de %s%s:%d%s com tamanho inesperado (%zd bytes) para ConfigMessage.\n",
+                    BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, bytes_received);
         }
     }
 
     // Cleanup when client disconnects or error occurs
     close(client_sock);
     remove_client_by_socket(client_sock); // Remove client from the list
-    printf(SERVER_LOG_PREFIX "Thread para cliente %s:%d terminada.\n", inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port));
+    printf(SERVER_LOG_PREFIX "Thread para cliente %s%s:%d%s terminada.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
     free(buffer);
     return NULL;
 }
@@ -474,8 +474,8 @@ int main(int argc, char *argv[])
 
         if (current_client_count >= MAX_CLIENTS)
         {
-            fprintf(stderr, SERVER_LOG_PREFIX "Máximo de clientes (%d) atingido. Rejeitando nova conexão de %s:%d.\n",
-                    MAX_CLIENTS, inet_ntoa(client_addr_tcp_loop.sin_addr), ntohs(client_addr_tcp_loop.sin_port));
+            fprintf(stderr, SERVER_LOG_PREFIX "Máximo de clientes (%d) atingido. Rejeitando nova conexão de %s%s:%d%s.\n",
+                    MAX_CLIENTS, BLUE, inet_ntoa(client_addr_tcp_loop.sin_addr), ntohs(client_addr_tcp_loop.sin_port), RESET);
             close(new_client_sock);
             continue;
         }
