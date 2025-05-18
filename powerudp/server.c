@@ -12,14 +12,14 @@
 #include <time.h>
 #include <signal.h>
 
-#define RED     "\x1b[31m"
-#define GREEN   "\x1b[32m"
-#define YELLOW  "\x1b[33m"
-#define BLUE    "\x1b[34m"
+#define RED "\x1b[31m"
+#define GREEN "\x1b[32m"
+#define YELLOW "\x1b[33m"
+#define BLUE "\x1b[34m"
 #define MAGENTA "\x1b[35m"
-#define CYAN    "\x1b[36m"
-#define RESET   "\x1b[0m"
-#define BOLD    "\x1b[1m"
+#define CYAN "\x1b[36m"
+#define RESET "\x1b[0m"
+#define BOLD "\x1b[1m"
 
 #define MAX_CLIENTS 10
 #define SERVER_LOG_PREFIX "\x1b[34m[Servidor]\x1b[0m "
@@ -173,6 +173,7 @@ void broadcast_config_multicast()
     }
 
     ConfigMessage msg_to_send; // Correct: Use typedef 'ConfigMessage'
+    memset(&msg_to_send, 0, sizeof(ConfigMessage));
 
     pthread_mutex_lock(&config_mutex);
     // Copy from current_global_config.
