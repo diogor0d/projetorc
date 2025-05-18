@@ -210,8 +210,8 @@ int init_protocol(const char *server_ip, int server_tcp_port_param, const char *
     server_addr_tcp.sin_port = htons(server_tcp_port_param); // Porta do servidor (convertida para network byte order)
 
     // Adicionar depuração aqui
-    printf("[PowerUDP Debug] Tentando converter IP: \"%s\" para servidor TCP.\n", server_ip);
-    printf("[PowerUDP Debug] Porta servidor TCP (host order): %d, Porta (network order): %d\n", server_tcp_port_param, ntohs(server_addr_tcp.sin_port));
+    printf("[PowerUDP Debug] Tentando converter IP: \"%s%s%s\" para servidor TCP.\n", BLUE, server_ip, RESET);
+    printf("[PowerUDP Debug] Porta servidor TCP (host order): %s%d%s, Porta (network order): %s%d%s\n", YELLOW, server_tcp_port_param, RESET, YELLOW, ntohs(server_addr_tcp.sin_port), RESET);
 
     // Converter endereço IP de string para formato de rede
     if (inet_pton(AF_INET, server_ip, &server_addr_tcp.sin_addr) <= 0)
@@ -226,7 +226,7 @@ int init_protocol(const char *server_ip, int server_tcp_port_param, const char *
     // --- FIM DO BLOCO DE PREPARAÇÃO DO ENDEREÇO COM DEPURAÇÃO ---
 
     // Conectar ao servidor TCP
-    printf("[PowerUDP Debug] Tentando conectar a %s:%d (TCP)...\n", inet_ntoa(server_addr_tcp.sin_addr), ntohs(server_addr_tcp.sin_port));
+    printf("[PowerUDP Debug] Tentando conectar a %s%s:%d%s (TCP)...\n", BLUE, inet_ntoa(server_addr_tcp.sin_addr), ntohs(server_addr_tcp.sin_port), RESET);
     if (connect(server_tcp_socket, (struct sockaddr *)&server_addr_tcp, sizeof(server_addr_tcp)) < 0)
     {
         perror("[PowerUDP Error] connect TCP servidor");
@@ -483,7 +483,7 @@ int send_message(const char *destination_ip, int destination_port, const char *m
     }
     if (destination_port <= 0 || destination_port > 65535)
     {
-        fprintf(stderr, "%s[PowerUDP Error] Porta de destino inválida (%d) para send_message.%s\n", RED, destination_port, RESET);
+        fprintf(stderr, "%s[PowerUDP Error] Porta de destino inválida (%s%d%s) para send_message.%s\n", RED, YELLOW, destination_port, RESET, RESET);
         return -1;
     }
 
@@ -528,8 +528,8 @@ int send_message(const char *destination_ip, int destination_port, const char *m
         // Simular perda de pacotes se ativado
         if (internal_power_udp_state.packet_loss_probability > 0 && (rand() % 100) < internal_power_udp_state.packet_loss_probability)
         {
-            printf("[PowerUDP SIMULATE] Pacote PowerUDP (seq %u) para %s:%d PERDIDO intencionalmente (tentativa %d).\n",
-                   ntohl(packet_to_send.header.sequence_number), destination_ip, destination_port, attempts);
+            printf("%s[PowerUDP SIMULATE] Pacote PowerUDP (seq %u) para %s%s:%d%s PERDIDO intencionalmente (tentativa %d).%s\n",
+       CYAN, ntohl(packet_to_send.header.sequence_number), BLUE, destination_ip, destination_port, CYAN, attempts, RESET);
         }
         else
         {
@@ -545,8 +545,8 @@ int send_message(const char *destination_ip, int destination_port, const char *m
                                             (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
                 return -1;
             }
-            printf("%s[PowerUDP]%s Pacote PowerUDP (seq %u, %zd bytes) enviado para %s:%d (tentativa %d).\n",
-                   RED, RESET, ntohl(packet_to_send.header.sequence_number), bytes_sent, destination_ip, destination_port, attempts);
+            printf("%s[PowerUDP]%s Pacote PowerUDP (seq %u, %zd bytes) enviado para %s%s:%d%s (tentativa %d).\n",
+                   RED, RESET, ntohl(packet_to_send.header.sequence_number), bytes_sent, BLUE, destination_ip, destination_port, RESET, attempts);
         }
 
         // Se retransmissões estão desativadas, não esperamos por ACK
@@ -647,9 +647,9 @@ int send_message(const char *destination_ip, int destination_port, const char *m
 
                     if (ack_packet.header.type == PACKET_TYPE_ACK)
                     { // ACK recebido
-                        printf("%s[PowerUDP]%s ACK (seq %u) recebido de %s:%d.\n",
+                        printf("%s[PowerUDP]%s ACK (seq %u) recebido de %s%s:%d%s.\n",
                                RED, RESET, ntohl(ack_packet.header.sequence_number),
-                               inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port));
+                               BLUE, inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port), RESET);
 
                         internal_power_udp_state.current_send_sequence_number++; // Incrementar para próxima mensagem
                         last_msg_retransmissions = attempts;
@@ -661,9 +661,9 @@ int send_message(const char *destination_ip, int destination_port, const char *m
                     }
                     else
                     { // PACKET_TYPE_NAK recebido
-                        printf("%s[PowerUDP]%s NAK (seq %u) recebido de %s:%d. Tratando como falha para esta tentativa.\n",
+                        printf("%s[PowerUDP]%s NAK (seq %u) recebido de %s%s:%d%s. Tratando como falha para esta tentativa.\n",
                                RED, RESET, ntohl(ack_packet.header.sequence_number),
-                               inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port));
+                               BLUE, inet_ntoa(ack_sender_addr.sin_addr), ntohs(ack_sender_addr.sin_port), RESET);
                         attempts++; // Incrementar tentativas
                         last_msg_retransmissions = attempts;
                         // Loop para retransmitir se attempts <= max_retries
@@ -893,14 +893,14 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
                     nak_packet.header.data_length = 0;
                     sendto(udp_socket_internal, &nak_packet, sizeof(power_udp_header_t), 0,
                            (struct sockaddr *)&current_sender_addr, current_addr_len);
-                    printf("%s[PowerUDP]%s NAK (seq %u, buffer overflow) enviado para %s:%d.\n", RED, RESET, recv_seq_num_host, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
+                    printf("%s[PowerUDP]%s NAK (seq %u, buffer overflow) enviado para %s%s:%d%s.\n", RED, RESET, recv_seq_num_host, BLUE, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port), RESET);
                 }
                 continue;
             }
 
-            printf("%s[PowerUDP]%s Pacote PowerUDP recebido (seq %u, len %u) de %s:%d.\n",
+            printf("%s[PowerUDP]%s Pacote PowerUDP recebido (seq %u, len %u) de %s%s:%d%s.\n",
                    RED, RESET, recv_seq_num_host, data_len,
-                   inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
+                   BLUE, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port), RESET);
 
             int send_ack_flag = 0;
             int accept_packet_flag = 0;
@@ -991,14 +991,14 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
 
                 if (internal_power_udp_state.packet_loss_probability > 0 && (rand() % 100) < (internal_power_udp_state.packet_loss_probability / 2))
                 {
-                    printf("[PowerUDP SIMULATE] Pacote ACK (seq %u) para %s:%d PERDIDO.\n",
-                           recv_seq_num_host, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
+                    printf("[PowerUDP SIMULATE] Pacote ACK (seq %u) para %s%s:%d%s PERDIDO.\n",
+                           recv_seq_num_host, BLUE, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port), RESET);
                 }
                 else
                 {
                     sendto(udp_socket_internal, &ack_packet, sizeof(power_udp_header_t), 0,
                            (struct sockaddr *)&current_sender_addr, current_addr_len);
-                    printf("%s[PowerUDP]%s ACK (seq %u) enviado para %s:%d.\n", RED, RESET, recv_seq_num_host, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
+                    printf("%s[PowerUDP]%s ACK (seq %u) enviado para %s%s:%d%s.\n", RED, RESET, recv_seq_num_host, BLUE, inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port), RESET);
                 }
             }
 
