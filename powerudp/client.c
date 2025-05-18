@@ -275,19 +275,19 @@ int main(int argc, char *argv[])
             if (get_last_message_stats(&retransmissions_val, &delivery_time_val) == 0)
             {
                 printf("%s[Cliente]%s Estatísticas da última mensagem enviada:\n", MAGENTA ,RESET);
-                printf("  Retransmissões: %d\n", retransmissions_val);
+                printf("  Retransmissões: %s%d%s\n", YELLOW, retransmissions_val, RESET);
                 if (delivery_time_val >= 0)
                 {
-                    printf("  Tempo de Entrega: %d ms (Sucesso)\n", delivery_time_val);
+                    printf("  Tempo de Entrega: %s%d ms%s (Sucesso)%s\n", YELLOW, delivery_time_val, GREEN, RESET);
                 }
                 else
                 {
-                    printf("  Entrega Falhou (ou sem tentativa completa). Tempo registado: %d ms\n", delivery_time_val);
+                    printf("  %sEntrega Falhou (ou sem tentativa completa)%s. Tempo registado: %s%d ms%s\n", RED, RESET, YELLOW, delivery_time_val, RESET);
                 }
             }
             else
             {
-                printf("%s[Cliente]%s Nenhuma estatística disponível ou erro ao obter.\n", MAGENTA, RESET);
+                printf("%s[Cliente]%s Nenhuma estatística disponível ou erro ao obter.%s\n", MAGENTA, YELLOW, RESET);
             }
         }
         else if (strcmp(command, "loss") == 0)
