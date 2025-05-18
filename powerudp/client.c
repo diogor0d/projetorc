@@ -87,6 +87,31 @@ void *power_udp_receiver_thread_func(void *arg)
             printf("%s[Cliente RX Thread]%s receive_message retornou 0. A thread vai terminar.\n", MAGENTA, RESET);
             break;
         }
+        else if (bytes_received == -3) // Server shutdown signal
+        {
+            printf("[Cliente RX Thread] Sinal de shutdown do servidor recebido. A terminar cliente...\n");
+            keep_receiver_thread_running = 0; // Stop this thread's loop
+            // Signal the main thread to initiate shutdown, similar to SIGINT
+            if (!sigint_received)
+            { // Avoid double signaling if SIGINT already handled
+                // kill(getpid(), SIGINT); // This will trigger the client's own SIGINT handler
+                // Alternative: set sigint_received and let main loop handle it.
+                // kill() is more immediate if the main thread is blocked on fgets.
+                // For robustness, ensure sigint_handler is reentrant or this is handled carefully.
+                // Let's try setting the flag first, as kill() from a thread to main can be complex.
+                // If main thread is stuck in fgets, this won't be immediate.
+                // A better way would be to make fgets non-blocking or use select on stdin.
+                // For now, let's use kill() as it's a common pattern to trigger existing signal handling.
+                printf("[Cliente RX Thread] Enviando SIGINT para o processo principal do cliente...\n");
+                if (kill(getpid(), SIGINT) != 0)
+                {
+                    perror("[Cliente RX Thread] Erro ao enviar SIGINT para o processo principal");
+                    // Fallback if kill fails: try to set the flag for the main loop
+                    sigint_received = 1;
+                }
+            }
+            break;
+        }
         else if (bytes_received == -1)
         {
             // fprintf(stderr, "[Cliente RX Thread] Erro em receive_message. Continuando...\n");
@@ -162,20 +187,44 @@ int main(int argc, char *argv[])
     // tratar sigint apos inicio seguro
     signal(SIGINT, handle_sigint);
 
-    while (fgets(input_line, sizeof(input_line), stdin) != NULL)
+    while (1)
     {
-        input_line[strcspn(input_line, "\n")] = 0;
-        if (strlen(input_line) == 0)
+        if (sigint_received)
         {
-            printf("> ");
-            fflush(stdout);
+            break;
+        }
+
+        printf("> ");
+        fflush(stdout);
+
+        if (fgets(input_line, sizeof(input_line), stdin) == NULL)
+        {
+            if (feof(stdin) && !sigint_received)
+            { // Check !sigint_received in case handler changes
+                printf("\n[Cliente] EOF recebido. A terminar...\n");
+            }
+            else if (ferror(stdin) && !sigint_received)
+            {
+                perror("\n[Cliente Error] Erro ao ler stdin");
+            }
+            break;
+        }
+
+        if (sigint_received)
+        {
+            break;
+        }
+
+        input_line[strcspn(input_line, "\n")] = 0;
+
+        if (strlen(input_line) == 0) // Empty line entered
+        {
             continue;
         }
+
         int num_parsed = sscanf(input_line, "%63s", command);
-        if (num_parsed <= 0)
+        if (num_parsed <= 0) // Failed to parse command (e.g., only whitespace)
         {
-            printf("> ");
-            fflush(stdout);
             continue;
         }
 
@@ -205,8 +254,6 @@ int main(int argc, char *argv[])
                     if (dest_port_int <= 0 || dest_port_int > 65535)
                     {
                         printf("Porta de destino inválida: %s\n", dest_port_str);
-                        printf("> ");
-                        fflush(stdout);
                         continue;
                     }
 
@@ -302,8 +349,6 @@ int main(int argc, char *argv[])
                 printf("Uso: loss <probabilidade_percentual (0-100)>\n");
             }
         }
-        printf("> ");
-        fflush(stdout);
     }
     // terminar a thread de receção e fechar o protocolo
     if (keep_receiver_thread_running)

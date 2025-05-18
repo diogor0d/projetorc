@@ -22,6 +22,7 @@
 
 typedef struct
 {
+    uint8_t server_shutdown_signal; // 1 se o servidor está a desligar, 0 caso contrário
     uint8_t enable_retrans;
     uint8_t enable_backoff;
     uint8_t enable_seq;

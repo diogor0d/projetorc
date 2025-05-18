@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <time.h>
+#include <signal.h>
 
 #define RED     "\x1b[31m"
 #define GREEN   "\x1b[32m"
@@ -45,6 +46,60 @@ static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char server_psk[MAX_PSK_LEN];
 static int multicast_sock = -1;
 static struct sockaddr_in multicast_addr_send;
+
+// sigint
+volatile sig_atomic_t sigint_received_server = 0;
+static int listen_fd_signal_handler = -1;
+
+void broadcast_shutdown_signal_multicast()
+{
+    if (multicast_sock < 0)
+    {
+        fprintf(stderr, SERVER_LOG_PREFIX "Socket multicast não inicializado. Não é possível difundir sinal de shutdown.\n");
+        return;
+    }
+
+    ConfigMessage shutdown_msg;
+    memset(&shutdown_msg, 0, sizeof(ConfigMessage)); // Initialize all fields to 0/false
+    shutdown_msg.server_shutdown_signal = 1;         // Signal server shutdown
+    // Other fields can remain 0 or be set to specific "disabled" values if desired
+
+    ssize_t bytes_sent = sendto(multicast_sock, &shutdown_msg, sizeof(ConfigMessage), 0,
+                                (struct sockaddr *)&multicast_addr_send, sizeof(multicast_addr_send));
+
+    if (bytes_sent < 0)
+    {
+        perror(SERVER_LOG_PREFIX "Erro ao enviar sinal de shutdown via multicast");
+    }
+    else if (bytes_sent != sizeof(ConfigMessage))
+    {
+        fprintf(stderr, SERVER_LOG_PREFIX "Erro: tamanho incorreto enviado para sinal de shutdown via multicast (%zd vs %zu bytes).\n",
+                bytes_sent, sizeof(ConfigMessage));
+    }
+    else
+    {
+        printf(SERVER_LOG_PREFIX "Sinal de shutdown difundido via multicast para %s:%d.\n",
+               inet_ntoa(multicast_addr_send.sin_addr), ntohs(multicast_addr_send.sin_port));
+    }
+}
+
+void handle_sigint_server(int sig)
+{
+    (void)sig; // Unused parameter
+    // Using printf as per previous discussions, though write is safer for async-signal operations.
+    printf("\n" SERVER_LOG_PREFIX "SIGINT recebido. A encerrar...\n");
+
+    // Broadcast shutdown signal to clients FIRST
+    broadcast_shutdown_signal_multicast();
+
+    sigint_received_server = 1;
+
+    if (listen_fd_signal_handler != -1)
+    {
+        close(listen_fd_signal_handler);
+        listen_fd_signal_handler = -1;
+    }
+}
 
 // Function to initialize the client list
 void init_client_list()
@@ -301,6 +356,7 @@ int main(int argc, char *argv[])
         print_server_usage(argv[0]);
         return 1;
     }
+    signal(SIGINT, SIG_IGN); // previnir termino inseguro do processo
 
     int server_tcp_port_main = atoi(argv[1]);
     const char *psk_param = (argc == 3) ? argv[2] : PSK_DEFAULT;
@@ -392,8 +448,11 @@ int main(int argc, char *argv[])
     // Broadcast initial configuration via multicast when server starts
     broadcast_config_multicast();
 
+    listen_fd_signal_handler = listen_fd;
+    signal(SIGINT, handle_sigint_server); // tratar SIGINT
+
     // Main loop to accept new client connections
-    while (1)
+    while (!sigint_received_server)
     {
         struct sockaddr_in client_addr_tcp_loop;
         socklen_t client_len = sizeof(client_addr_tcp_loop);
