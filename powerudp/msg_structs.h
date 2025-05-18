@@ -1,28 +1,33 @@
+/*
+    Projeto de Redes de Comunicação 2024/2025 - PowerUDP
+    Diogo Nuno Fonseca Rodrigues 2022257625
+    Guilherme Teixeira Gonçalves Rosmaninho 2022257636
+*/
+
 #ifndef MSG_STRUCTS_H
 #define MSG_STRUCTS_H
 
-#include <stdint.h>    // Para tipos como uint8_t, uint16_t, uint32_t
-#include <arpa/inet.h> // Para struct sockaddr_in
+#include <stdint.h>    // para tipos como uint8_t, uint16_t, uint32_t
+#include <arpa/inet.h> // para struct sockaddr_in
 
-// -- Constantes Globais --
-#define MAX_PAYLOAD_SIZE 1024                           // Tamanho máximo do payload da aplicação numa mensagem PowerUDP
-#define PSK_DEFAULT "RC_Project_2024_2025_PowerUDP_PSK" // Chave pré-partilhada (Pre-Shared Key)
+// constantes
+#define MAX_PAYLOAD_SIZE 1024           // tamanho máximo do payload da aplicação numa mensagem PowerUDP
+#define PSK_DEFAULT "projetorc20242025" // psk default
 #define MAX_PSK_LEN 64
 
-// Portas Padrão (podem ser alteradas ou tornadas configuráveis)
-#define SERVER_TCP_PORT 8000       // Porta TCP no servidor para registo e pedidos de config
-#define POWER_UDP_PORT_CLIENT 8001 // Porta UDP que os clientes usam para comunicar via PowerUDP
-#define MULTICAST_PORT 8002        // Porta para as mensagens multicast de configuração
+// portas default
+#define SERVER_TCP_PORT 8000       // porta TCP no servidor para registo e pedidos de alteracao config
+#define POWER_UDP_PORT_CLIENT 8001 // porta UDP (default!) que os clientes usam para comunicar via PowerUDP
+#define MULTICAST_PORT 8002        // porta para as mensagens multicast de configuração
 
-// Endereço Multicast Padrão (deve ser um endereço válido para multicast, ex: 224.0.0.0 a 239.255.255.255)
-// Este endereço deve ser configurado nos routers para permitir o encaminhamento (ip pim sparse-dense-mode)
+// grupo multicast
 #define MULTICAST_ADDRESS "239.1.2.3"
 
-#define MAX_BUFFER_SIZE (MAX_PAYLOAD_SIZE + sizeof(power_udp_header_t) + 100) // Buffer genérico
+#define MAX_BUFFER_SIZE (MAX_PAYLOAD_SIZE + sizeof(power_udp_header_t) + 100) // buffer generico
 
 typedef struct
 {
-    uint8_t server_shutdown_signal; // 1 se o servidor está a desligar, 0 caso contrário
+    uint8_t server_shutdown_signal; // 1 se o servidor cessou atividade, 0 caso contrário
     uint8_t enable_retrans;
     uint8_t enable_backoff;
     uint8_t enable_seq;
@@ -32,34 +37,31 @@ typedef struct
 
 struct RegisterMessage
 {
-    char psk[64]; // Chave pré-definida para autenticação
+    char psk[64]; // psk
 };
 
-// Tipos de pacotes PowerUDP
 typedef enum
 {
-    PACKET_TYPE_DATA, // Dados da aplicação
-    PACKET_TYPE_ACK,  // Confirmação de receção
-    PACKET_TYPE_NAK   // Confirmação negativa (erro de sequência, etc.)
+    PACKET_TYPE_DATA,
+    PACKET_TYPE_ACK,
+    PACKET_TYPE_NAK
 } power_udp_packet_type_t;
 
 typedef struct
 {
-    uint32_t sequence_number;     // Número de sequência para ordenação
-    power_udp_packet_type_t type; // Tipo de pacote (DATA, ACK, NAK)
-    uint16_t data_length;         // Comprimento do payload (dados da aplicação)
-    // Poderia adicionar um checksum aqui se a integridade do UDP não for suficiente
-    // uint16_t checksum;
+    uint32_t sequence_number;     // número de sequência para ordenação
+    power_udp_packet_type_t type; // tipo de pacote (DATA, ACK, NAK)
+    uint16_t data_length;         // tamanho do payload (dados)
 } power_udp_header_t;
 
-// Estrutura completa de um pacote PowerUDP (cabeçalho + payload)
+// estrutura de um pacote PowerUDP
 typedef struct
 {
     power_udp_header_t header;
     char payload[MAX_PAYLOAD_SIZE];
 } power_udp_packet_t;
 
-// Estrutura para estatísticas da última mensagem enviada (API get_last_message_stats)
+// estrutura para armazenamento das estatisticas
 struct PowerUDPStats
 {
     int retransmissions;
@@ -67,8 +69,7 @@ struct PowerUDPStats
     int successful;       // 1 se ACK recebido, 0 caso contrário (timeout após max_retries)
 };
 
-// Configuração interna do protocolo PowerUDP no cliente
-// Esta estrutura será gerida pela biblioteca PowerUDP e atualizada via multicast.
+// armazenamento do estado interno do PowerUDP
 typedef struct
 {
     uint8_t retransmission_enabled;
@@ -76,11 +77,9 @@ typedef struct
     uint8_t sequence_enabled;
     uint16_t base_timeout_ms;
     uint8_t max_retries;
-    // Estado interno
     uint32_t current_send_sequence_number;
     uint32_t expected_recv_sequence_number;
-    // Para simulação de perda
-    int packet_loss_probability; // Percentagem (0-100)
+    int packet_loss_probability;
 } power_udp_config_t;
 
 #endif

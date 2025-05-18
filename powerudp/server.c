@@ -1,5 +1,11 @@
-#include "msg_structs.h" // ConfigMessage is defined here
-#include "powerudp.h"    // For constants like PSK_DEFAULT, MULTICAST_ADDRESS, etc.
+/*
+    Projeto de Redes de Comunicação 2024/2025 - PowerUDP
+    Diogo Nuno Fonseca Rodrigues 2022257625
+    Guilherme Teixeira Gonçalves Rosmaninho 2022257636
+*/
+
+#include "msg_structs.h"
+#include "powerudp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +30,13 @@
 #define MAX_CLIENTS 10
 #define SERVER_LOG_PREFIX "\x1b[34m[Servidor]\x1b[0m "
 
-// Structure to store information about a registered client
+typedef struct
+{
+    int client_socket_fd;
+    struct sockaddr_in client_address; // para aceder ao endereco do cliente na thread
+} client_thread_args_t;
+
+// estrutura para armazenar informações de um cliente
 typedef struct
 {
     int socket_fd;
@@ -34,13 +46,11 @@ typedef struct
     time_t registration_time;
 } client_info_t;
 
-// List of registered clients and global configuration
 static client_info_t registered_clients[MAX_CLIENTS];
 static int num_registered_clients = 0;
 static pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// Global PowerUDP configuration, using the typedef 'ConfigMessage'
-static ConfigMessage current_global_config; // Correct: Use typedef 'ConfigMessage'
+static ConfigMessage current_global_config;
 static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static char server_psk[MAX_PSK_LEN];
@@ -60,9 +70,8 @@ void broadcast_shutdown_signal_multicast()
     }
 
     ConfigMessage shutdown_msg;
-    memset(&shutdown_msg, 0, sizeof(ConfigMessage)); // Initialize all fields to 0/false
-    shutdown_msg.server_shutdown_signal = 1;         // Signal server shutdown
-    // Other fields can remain 0 or be set to specific "disabled" values if desired
+    memset(&shutdown_msg, 0, sizeof(ConfigMessage)); // inicializa a estrutura
+    shutdown_msg.server_shutdown_signal = 1;
 
     ssize_t bytes_sent = sendto(multicast_sock, &shutdown_msg, sizeof(ConfigMessage), 0,
                                 (struct sockaddr *)&multicast_addr_send, sizeof(multicast_addr_send));
@@ -86,10 +95,9 @@ void broadcast_shutdown_signal_multicast()
 void handle_sigint_server(int sig)
 {
     (void)sig; // Unused parameter
-    // Using printf as per previous discussions, though write is safer for async-signal operations.
+
     printf("\n" SERVER_LOG_PREFIX "SIGINT recebido. A encerrar...\n");
 
-    // Broadcast shutdown signal to clients FIRST
     broadcast_shutdown_signal_multicast();
 
     sigint_received_server = 1;
@@ -100,8 +108,7 @@ void handle_sigint_server(int sig)
         listen_fd_signal_handler = -1;
     }
 }
-
-// Function to initialize the client list
+// inciializar lista de clientes
 void init_client_list()
 {
     pthread_mutex_lock(&clients_mutex);
@@ -114,8 +121,8 @@ void init_client_list()
     pthread_mutex_unlock(&clients_mutex);
 }
 
-// Adds a client to the list
-// Returns the index in the list or -1 if full
+// adicionar um cliente a lista
+// devolve o indice na lista ou -1 se cheia
 int add_client(int client_socket, struct sockaddr_in client_address, pthread_t tid)
 {
     pthread_mutex_lock(&clients_mutex);
@@ -140,7 +147,7 @@ int add_client(int client_socket, struct sockaddr_in client_address, pthread_t t
     return -1;
 }
 
-// Removes a client from the list by their socket descriptor
+// um client da lista atraves do seu fd
 void remove_client_by_socket(int client_socket)
 {
     pthread_mutex_lock(&clients_mutex);
@@ -163,7 +170,7 @@ void remove_client_by_socket(int client_socket)
     pthread_mutex_unlock(&clients_mutex);
 }
 
-// Function to broadcast the current configuration to ALL registered clients via multicast
+// funcao para transmitir a configuração atual para todos os clientes
 void broadcast_config_multicast()
 {
     if (multicast_sock < 0)
@@ -172,21 +179,18 @@ void broadcast_config_multicast()
         return;
     }
 
-    ConfigMessage msg_to_send; // Correct: Use typedef 'ConfigMessage'
+    ConfigMessage msg_to_send;
     memset(&msg_to_send, 0, sizeof(ConfigMessage));
 
     pthread_mutex_lock(&config_mutex);
-    // Copy from current_global_config.
-    // current_global_config.base_timeout is in host byte order.
-    // Convert to network byte order for sending.
     msg_to_send.enable_retrans = current_global_config.enable_retrans;
     msg_to_send.enable_backoff = current_global_config.enable_backoff;
     msg_to_send.enable_seq = current_global_config.enable_seq;
-    msg_to_send.base_timeout = htons(current_global_config.base_timeout); // Correct field: base_timeout
+    msg_to_send.base_timeout = htons(current_global_config.base_timeout);
     msg_to_send.max_retries = current_global_config.max_retries;
     pthread_mutex_unlock(&config_mutex);
 
-    ssize_t bytes_sent = sendto(multicast_sock, &msg_to_send, sizeof(ConfigMessage), 0, // Correct: sizeof(ConfigMessage)
+    ssize_t bytes_sent = sendto(multicast_sock, &msg_to_send, sizeof(ConfigMessage), 0,
                                 (struct sockaddr *)&multicast_addr_send, sizeof(multicast_addr_send));
 
     if (bytes_sent < 0)
@@ -194,9 +198,9 @@ void broadcast_config_multicast()
         perror(SERVER_LOG_PREFIX "Erro ao enviar configuração via multicast");
     }
     else if (bytes_sent != sizeof(ConfigMessage))
-    { // Correct: sizeof(ConfigMessage)
+    {
         fprintf(stderr, SERVER_LOG_PREFIX "Erro: tamanho incorreto enviado via multicast (%zd vs %zu bytes).\n",
-                bytes_sent, sizeof(ConfigMessage)); // Correct: sizeof(ConfigMessage)
+                bytes_sent, sizeof(ConfigMessage));
     }
     else
     {
@@ -205,39 +209,28 @@ void broadcast_config_multicast()
     }
 }
 
-// Thread function to handle each TCP client
+// thread para tratar cada cliente tcp
 void *client_handler_thread(void *arg)
 {
-    int client_sock = *((int *)arg);
-    free(arg); // Free the dynamically allocated socket descriptor
+    client_thread_args_t *thread_data = (client_thread_args_t *)arg;
+    int client_sock = thread_data->client_socket_fd;
+    struct sockaddr_in client_addr_info = thread_data->client_address;
+    free(arg);
 
-    // Determine the larger size for the buffer between RegisterMessage and ConfigMessage
+    // determinar o maior tamanho do buffer a alocar
     size_t buffer_alloc_size = sizeof(struct RegisterMessage) > sizeof(ConfigMessage) ? sizeof(struct RegisterMessage) : sizeof(ConfigMessage);
     char *buffer = malloc(buffer_alloc_size);
     if (!buffer)
     {
         perror(SERVER_LOG_PREFIX "malloc for client buffer failed");
-        close(client_sock);                   // Close socket before exiting thread
-        remove_client_by_socket(client_sock); // Attempt to remove if it was added
+        close(client_sock);
         return NULL;
     }
 
     ssize_t bytes_received;
     int client_authenticated = 0;
-    struct sockaddr_in client_addr_info;
-    socklen_t addr_len = sizeof(client_addr_info);
 
-    // Get client's address information for logging
-    if (getpeername(client_sock, (struct sockaddr *)&client_addr_info, &addr_len) != 0)
-    {
-        perror(SERVER_LOG_PREFIX "getpeername failed for client socket");
-        close(client_sock);
-        remove_client_by_socket(client_sock);
-        free(buffer);
-        return NULL;
-    }
-
-    // 1. Wait for RegisterMessage and Authenticate
+    // aguardar por mensagem de registo do cliente
     bytes_received = recv(client_sock, buffer, sizeof(struct RegisterMessage), 0);
     if (bytes_received <= 0)
     {
@@ -250,94 +243,121 @@ void *client_handler_thread(void *arg)
             perror(SERVER_LOG_PREFIX "Erro ao receber mensagem de registo");
         }
         close(client_sock);
-        remove_client_by_socket(client_sock);
         free(buffer);
         return NULL;
     }
 
+    uint8_t auth_response_status = 0;
+
     if (bytes_received == sizeof(struct RegisterMessage))
     {
         struct RegisterMessage *reg_msg = (struct RegisterMessage *)buffer;
-        reg_msg->psk[MAX_PSK_LEN - 1] = '\0'; // Ensure null-termination
+        reg_msg->psk[MAX_PSK_LEN - 1] = '\0';
         if (strcmp(reg_msg->psk, server_psk) == 0)
         {
             client_authenticated = 1;
+            auth_response_status = 1;
             printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s autenticado %scom sucesso%s.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, GREEN, RESET);
         }
         else
         {
+            auth_response_status = 0;
             fprintf(stderr, SERVER_LOG_PREFIX "Falha na autenticação do cliente %s%s:%d%s (PSK inválida: '%s').\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, reg_msg->psk);
         }
     }
     else
     {
+        auth_response_status = 0;
         fprintf(stderr, SERVER_LOG_PREFIX "Mensagem de registo com tamanho inválido (%zd bytes) de %s%s:%d%s.\n", bytes_received, BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
+    }
+
+    // enviar resposta de autenticacao
+    if (send(client_sock, &auth_response_status, sizeof(auth_response_status), 0) < 0)
+    {
+        perror(SERVER_LOG_PREFIX "Erro ao enviar resposta de autenticação para o cliente");
+
+        if (!client_authenticated)
+        {
+            close(client_sock);
+            free(buffer);
+            return NULL;
+        }
     }
 
     if (!client_authenticated)
     {
         close(client_sock);
-        remove_client_by_socket(client_sock);
         free(buffer);
         return NULL;
     }
 
-    // Client authenticated, now can receive configuration requests
+    // cliente autenticado
+    if (add_client(client_sock, client_addr_info, pthread_self()) == -1)
+    {
+        fprintf(stderr, SERVER_LOG_PREFIX "Falha ao adicionar cliente autenticado %s%s:%d%s à lista. Fechando conexão.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
+        close(client_sock);
+        free(buffer);
+        return NULL;
+    }
+
+    // receber mensagens de configuração do cliente (apos autenticação)
     while (1)
     {
-        memset(buffer, 0, buffer_alloc_size);
-        bytes_received = recv(client_sock, buffer, sizeof(ConfigMessage), 0); // Expect ConfigMessage
+        bytes_received = recv(client_sock, buffer, sizeof(ConfigMessage), 0);
 
         if (bytes_received <= 0)
         {
             if (bytes_received == 0)
             {
-                printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s desconectou-se.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
+                printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s desconectou-se (conexão TCP fechada).\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
             }
             else
             {
-                perror(SERVER_LOG_PREFIX "Erro ao receber do cliente");
+                perror(SERVER_LOG_PREFIX "Erro ao receber dados do cliente (TCP)");
             }
-            break; // Exit loop, thread will terminate
+            break;
         }
 
         if (bytes_received == sizeof(ConfigMessage))
-        {                                                         // Correct: sizeof(ConfigMessage)
-            ConfigMessage *req_cfg_msg = (ConfigMessage *)buffer; // Correct: Use typedef 'ConfigMessage'
-            printf(SERVER_LOG_PREFIX "Recebido pedido de alteração de configuração de %s%s:%d%s.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
+        {
+            ConfigMessage *new_config_msg = (ConfigMessage *)buffer;
+
+            if (new_config_msg->server_shutdown_signal == 1)
+            {
+                fprintf(stderr, SERVER_LOG_PREFIX "Cliente %s%s:%d%s enviou pedido de config com sinal de shutdown. Ignorando.\n",
+                        BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
+                continue;
+            }
 
             pthread_mutex_lock(&config_mutex);
-            // Update global configuration.
-            // req_cfg_msg->base_timeout is in network byte order from client.
-            // Convert to host byte order for storage in current_global_config.
-            current_global_config.enable_retrans = req_cfg_msg->enable_retrans;
-            current_global_config.enable_backoff = req_cfg_msg->enable_backoff;
-            current_global_config.enable_seq = req_cfg_msg->enable_seq;
-            current_global_config.base_timeout = ntohs(req_cfg_msg->base_timeout); // Correct field: base_timeout
-            current_global_config.max_retries = req_cfg_msg->max_retries;
+            current_global_config.enable_retrans = new_config_msg->enable_retrans;
+            current_global_config.enable_backoff = new_config_msg->enable_backoff;
+            current_global_config.enable_seq = new_config_msg->enable_seq;
+            current_global_config.base_timeout = ntohs(new_config_msg->base_timeout);
+            current_global_config.max_retries = new_config_msg->max_retries;
             pthread_mutex_unlock(&config_mutex);
 
-            printf(SERVER_LOG_PREFIX "Configuração global atualizada:\n");
-            // Display current_global_config (base_timeout is now in host order)
-            printf("  Retransmissão: %s\n", current_global_config.enable_retrans ? "Ativada" : "Desativada");
-            printf("  Backoff: %s\n", current_global_config.enable_backoff ? "Ativada" : "Desativada");
-            printf("  Sequência: %s\n", current_global_config.enable_seq ? "Ativada" : "Desativada");
-            printf("  Timeout Base: %u ms\n", current_global_config.base_timeout); // Correct field
-            printf("  Max Retries: %u\n", current_global_config.max_retries);
+            printf(SERVER_LOG_PREFIX "Configuração atualizada por %s%s:%d%s:\n",
+                   BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
+            printf("  Retransmissão: %s, Backoff: %s, Sequência: %s, Timeout: %u ms, Retries: %u\n",
+                   current_global_config.enable_retrans ? "Ativada" : "Desativada",
+                   current_global_config.enable_backoff ? "Ativada" : "Desativada",
+                   current_global_config.enable_seq ? "Ativada" : "Desativada",
+                   current_global_config.base_timeout,
+                   current_global_config.max_retries);
 
-            // Broadcast the new configuration to all clients
-            broadcast_config_multicast();
+            broadcast_config_multicast(); // transmitir nova configuração para todos os clientes
         }
         else
         {
-            fprintf(stderr, SERVER_LOG_PREFIX "Recebida mensagem TCP de %s%s:%d%s com tamanho inesperado (%zd bytes) para ConfigMessage.\n",
-                    BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, bytes_received);
+            fprintf(stderr, SERVER_LOG_PREFIX "Recebida mensagem TCP de tamanho inesperado (%zd bytes) de %s%s:%d%s. Esperado %zu bytes para ConfigMessage. Ignorando.\n",
+                    bytes_received, BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, sizeof(ConfigMessage));
         }
     }
 
-    // Cleanup when client disconnects or error occurs
+    // limpeza
     close(client_sock);
-    remove_client_by_socket(client_sock); // Remove client from the list
+    remove_client_by_socket(client_sock); // remover cliente da lista
     printf(SERVER_LOG_PREFIX "Thread para cliente %s%s:%d%s terminada.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
     free(buffer);
     return NULL;
@@ -362,25 +382,25 @@ int main(int argc, char *argv[])
     int server_tcp_port_main = atoi(argv[1]);
     const char *psk_param = (argc == 3) ? argv[2] : PSK_DEFAULT;
     strncpy(server_psk, psk_param, MAX_PSK_LEN - 1);
-    server_psk[MAX_PSK_LEN - 1] = '\0'; // Ensure null-termination
+    server_psk[MAX_PSK_LEN - 1] = '\0';
 
     printf(SERVER_LOG_PREFIX "A iniciar na porta TCP %s%d%s...\n", YELLOW, server_tcp_port_main, RESET);
     printf(SERVER_LOG_PREFIX "PSK do Servidor: %s%s%s\n", YELLOW, server_psk, RESET);
     printf(SERVER_LOG_PREFIX "Grupo Multicast para Config: %s%s:%d%s\n", BLUE, MULTICAST_ADDRESS, MULTICAST_PORT, RESET);
 
-    // Initialize global configuration (base_timeout stored in host order)
+    // inicializar configuracao default
     pthread_mutex_lock(&config_mutex);
     current_global_config.enable_retrans = 1;
     current_global_config.enable_backoff = 1;
     current_global_config.enable_seq = 1;
-    current_global_config.base_timeout = 1000; // Correct field: base_timeout (host order)
+    current_global_config.base_timeout = 1000;
     current_global_config.max_retries = 3;
     pthread_mutex_unlock(&config_mutex);
     printf(SERVER_LOG_PREFIX "Configuração PowerUDP inicial padrão definida.\n");
 
     init_client_list();
 
-    // Configure TCP listening socket
+    // configurar socket tcp
     int listen_fd;
     struct sockaddr_in serv_addr_tcp_main;
 
@@ -391,16 +411,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int opt = 1; // For SO_REUSEADDR
+    int opt = 1;
     if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt)) < 0)
     {
         perror(SERVER_LOG_PREFIX "setsockopt SO_REUSEADDR falhou");
-        // Continue anyway
     }
 
     memset(&serv_addr_tcp_main, 0, sizeof(serv_addr_tcp_main));
     serv_addr_tcp_main.sin_family = AF_INET;
-    serv_addr_tcp_main.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
+    serv_addr_tcp_main.sin_addr.s_addr = htonl(INADDR_ANY); // ouvir em todas as interfaces
     serv_addr_tcp_main.sin_port = htons(server_tcp_port_main);
 
     if (bind(listen_fd, (struct sockaddr *)&serv_addr_tcp_main, sizeof(serv_addr_tcp_main)) < 0)
@@ -411,14 +430,14 @@ int main(int argc, char *argv[])
     }
 
     if (listen(listen_fd, MAX_CLIENTS) < 0)
-    { // Queue for pending connections
+    { // fila de espera para conexões
         perror(SERVER_LOG_PREFIX "Erro no listen do socket TCP");
         close(listen_fd);
         return 1;
     }
     printf(SERVER_LOG_PREFIX "A escutar por conexões TCP na porta %s%d%s.\n", YELLOW, server_tcp_port_main, RESET);
 
-    // Configure Multicast socket for sending
+    // configurar socket multicast para enviar mensagens de configuração
     multicast_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (multicast_sock < 0)
     {
@@ -427,8 +446,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Optional: Configure TTL for multicast if needed to cross routers
-    int mc_ttl = 5; // Default is 1 (same subnet). Increase if routers are involved.
+    int mc_ttl = 5;
     if (setsockopt(multicast_sock, IPPROTO_IP, IP_MULTICAST_TTL, &mc_ttl, sizeof(mc_ttl)) < 0)
     {
         perror(SERVER_LOG_PREFIX "Aviso: não foi possível definir TTL multicast");
@@ -446,13 +464,13 @@ int main(int argc, char *argv[])
     }
     printf(SERVER_LOG_PREFIX "Socket multicast configurado para enviar para %s%s:%d%s.\n", BLUE, MULTICAST_ADDRESS, MULTICAST_PORT, RESET);
 
-    // Broadcast initial configuration via multicast when server starts
+    // broadcast inicial ao iniciar o servidor
     broadcast_config_multicast();
 
     listen_fd_signal_handler = listen_fd;
-    signal(SIGINT, handle_sigint_server); // tratar SIGINT
+    signal(SIGINT, handle_sigint_server); // tratar SIGINT novamente
 
-    // Main loop to accept new client connections
+    // loop principal para aceitar conexoes tcp
     while (!sigint_received_server)
     {
         struct sockaddr_in client_addr_tcp_loop;
@@ -461,15 +479,17 @@ int main(int argc, char *argv[])
 
         if (new_client_sock < 0)
         {
+            if (sigint_received_server)
+                break;
             perror(SERVER_LOG_PREFIX "Erro ao aceitar conexão TCP");
-            continue; // Try to accept next connection
+            continue;
         }
 
         printf(SERVER_LOG_PREFIX "Nova conexão TCP de %s%s:%d%s.\n",
                BLUE, inet_ntoa(client_addr_tcp_loop.sin_addr), ntohs(client_addr_tcp_loop.sin_port), RESET);
 
         pthread_mutex_lock(&clients_mutex);
-        int current_client_count = num_registered_clients; // Read while locked
+        int current_client_count = num_registered_clients;
         pthread_mutex_unlock(&clients_mutex);
 
         if (current_client_count >= MAX_CLIENTS)
@@ -481,43 +501,30 @@ int main(int argc, char *argv[])
         }
 
         pthread_t tid;
-        // Pass a dynamically allocated copy of the socket descriptor to the thread
-        int *p_client_sock = malloc(sizeof(int));
-        if (!p_client_sock)
+        // passar uma copia alocada dinamicamente do socket e endereco para a thread
+        client_thread_args_t *p_thread_args = malloc(sizeof(client_thread_args_t));
+        if (!p_thread_args)
         {
-            perror(SERVER_LOG_PREFIX "Erro malloc para socket do cliente");
+            perror(SERVER_LOG_PREFIX "Erro malloc para argumentos da thread do cliente");
             close(new_client_sock);
             continue;
         }
-        *p_client_sock = new_client_sock;
+        p_thread_args->client_socket_fd = new_client_sock;
+        p_thread_args->client_address = client_addr_tcp_loop;
 
-        if (pthread_create(&tid, NULL, client_handler_thread, (void *)p_client_sock) != 0)
+        if (pthread_create(&tid, NULL, client_handler_thread, (void *)p_thread_args) != 0)
         {
             perror(SERVER_LOG_PREFIX "Erro ao criar thread para o cliente");
-            free(p_client_sock); // Free if thread creation failed
+            free(p_thread_args);
             close(new_client_sock);
             continue;
         }
 
-        // Detach the thread so its resources are automatically reclaimed when it exits.
-        // This server model does not explicitly join client threads.
+        // libertar recursos da thread no fim da sua execucao
         pthread_detach(tid);
-
-        // Add client to the list. The client_handler_thread is responsible for removing
-        // the client on authentication failure or disconnection.
-        // add_client is internally mutex-protected.
-        if (add_client(new_client_sock, client_addr_tcp_loop, tid) == -1)
-        {
-            // This scenario (list full after check) should be rare but possible in a race.
-            // Or if add_client has other failure conditions.
-            fprintf(stderr, SERVER_LOG_PREFIX "Não foi possível adicionar cliente à lista após aceitar e criar thread. Socket %d.\n", new_client_sock);
-            // The thread will likely fail on recv and attempt to clean up.
-            // Closing the socket here could be problematic if the thread has already started using it.
-            // p_client_sock is now owned by the thread.
-        }
     }
 
-    // Cleanup (this code is not typically reached in an infinite loop server)
+    // cleanup
     close(listen_fd);
     if (multicast_sock != -1)
         close(multicast_sock);

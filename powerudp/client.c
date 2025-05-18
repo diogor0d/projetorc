@@ -1,3 +1,9 @@
+/*
+    Projeto de Redes de Comunicação 2024/2025 - PowerUDP
+    Diogo Nuno Fonseca Rodrigues 2022257625
+    Guilherme Teixeira Gonçalves Rosmaninho 2022257636
+*/
+
 #define _DEFAULT_SOURCE // para o usleep
 #include "msg_structs.h"
 #include "powerudp.h"
@@ -15,14 +21,14 @@
 #define MAX_INPUT_LINE 2048
 #define MAX_MESSAGE_USER 1000 // tamanho maximo do payload de uma mensagem
 
-#define RED     "\x1b[31m"
-#define GREEN   "\x1b[32m"
-#define YELLOW  "\x1b[33m"
-#define BLUE    "\x1b[34m"
+#define RED "\x1b[31m"
+#define GREEN "\x1b[32m"
+#define YELLOW "\x1b[33m"
+#define BLUE "\x1b[34m"
 #define MAGENTA "\x1b[35m"
-#define CYAN    "\x1b[36m"
-#define RESET   "\x1b[0m"
-#define BOLD    "\x1b[1m"
+#define CYAN "\x1b[36m"
+#define RESET "\x1b[0m"
+#define BOLD "\x1b[1m"
 
 // variável global para controlar a execução da thread de receção
 pthread_t receiver_thread_id;
@@ -87,31 +93,6 @@ void *power_udp_receiver_thread_func(void *arg)
             printf("%s[Cliente RX Thread]%s receive_message retornou 0. A thread vai terminar.\n", MAGENTA, RESET);
             break;
         }
-        else if (bytes_received == -3) // Server shutdown signal
-        {
-            printf("[Cliente RX Thread] Sinal de shutdown do servidor recebido. A terminar cliente...\n");
-            keep_receiver_thread_running = 0; // Stop this thread's loop
-            // Signal the main thread to initiate shutdown, similar to SIGINT
-            if (!sigint_received)
-            { // Avoid double signaling if SIGINT already handled
-                // kill(getpid(), SIGINT); // This will trigger the client's own SIGINT handler
-                // Alternative: set sigint_received and let main loop handle it.
-                // kill() is more immediate if the main thread is blocked on fgets.
-                // For robustness, ensure sigint_handler is reentrant or this is handled carefully.
-                // Let's try setting the flag first, as kill() from a thread to main can be complex.
-                // If main thread is stuck in fgets, this won't be immediate.
-                // A better way would be to make fgets non-blocking or use select on stdin.
-                // For now, let's use kill() as it's a common pattern to trigger existing signal handling.
-                printf("[Cliente RX Thread] Enviando SIGINT para o processo principal do cliente...\n");
-                if (kill(getpid(), SIGINT) != 0)
-                {
-                    perror("[Cliente RX Thread] Erro ao enviar SIGINT para o processo principal");
-                    // Fallback if kill fails: try to set the flag for the main loop
-                    sigint_received = 1;
-                }
-            }
-            break;
-        }
         else if (bytes_received == -1)
         {
             // fprintf(stderr, "[Cliente RX Thread] Erro em receive_message. Continuando...\n");
@@ -125,8 +106,8 @@ void *power_udp_receiver_thread_func(void *arg)
 void print_usage(const char *prog_name)
 {
     printf("Uso: %s <IP_Servidor_Config> <Porta_TCP_Servidor_Config> [PSK]\n", prog_name);
-    printf("  PSK (opcional): Chave pré-partilhada. Padrão: \"%s\"\n", PSK_DEFAULT);
-    printf("Exemplo: %s 192.168.1.100 %d MySecurePSK\n", prog_name, SERVER_TCP_PORT);
+    printf("  PSK (opcional): Chave pré-partilhada. Default: \"%s\"\n", PSK_DEFAULT);
+    printf("Exemplo: %s 192.168.1.100 %d RC20242025\n", prog_name, SERVER_TCP_PORT);
 }
 
 void print_commands()
@@ -135,7 +116,7 @@ void print_commands()
     printf("  %s%s %s<IP>:<Porta> <mensagem>%s - Envia uma mensagem PowerUDP para o destino especificado.\n", CYAN, "send", BOLD, RESET);
     printf("  %s%s %s<retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries>%s - Solicita a alteração das configurações do protocolo.\n", YELLOW, "config", BOLD, RESET);
     printf("  %s%s%s - Exibe estatísticas da última mensagem enviada.\n", GREEN, "stats", RESET);
-    printf("  %s%s %s<percentual>%s - Simula perda de pacotes na receção (0-100%%).\n", RED, "loss", BOLD, RESET);
+    printf("  %s%s %s<percentual>%s - Simula packet loss na receção (0-100%%).\n", RED, "loss", BOLD, RESET);
     printf("  %s%s%s - Mostra este menu de ajuda.\n", MAGENTA, "help", RESET);
     printf("  %s%s%s - Encerra o cliente PowerUDP.\n", CYAN, "quit", RESET);
 
@@ -217,13 +198,13 @@ int main(int argc, char *argv[])
 
         input_line[strcspn(input_line, "\n")] = 0;
 
-        if (strlen(input_line) == 0) // Empty line entered
+        if (strlen(input_line) == 0) // linha vazia
         {
             continue;
         }
 
         int num_parsed = sscanf(input_line, "%63s", command);
-        if (num_parsed <= 0) // Failed to parse command (e.g., only whitespace)
+        if (num_parsed <= 0) // falha no parsing do comando
         {
             continue;
         }
@@ -321,7 +302,7 @@ int main(int argc, char *argv[])
             int delivery_time_val;
             if (get_last_message_stats(&retransmissions_val, &delivery_time_val) == 0)
             {
-                printf("%s[Cliente]%s Estatísticas da última mensagem enviada:\n", MAGENTA ,RESET);
+                printf("%s[Cliente]%s Estatísticas da última mensagem enviada:\n", MAGENTA, RESET);
                 printf("  Retransmissões: %s%d%s\n", YELLOW, retransmissions_val, RESET);
                 if (delivery_time_val >= 0)
                 {
