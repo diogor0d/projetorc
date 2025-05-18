@@ -54,7 +54,7 @@ void *power_udp_receiver_thread_func(void *arg)
     char sender_ip[INET_ADDRSTRLEN]; // Buffer for sender's IP string
     uint16_t sender_port;            // For sender's port
 
-    printf("[Cliente RX Thread] À escuta por novas mensagens PowerUDP.\n");
+    printf("%s[Cliente RX Thread]%s À escuta por novas mensagens PowerUDP.\n", MAGENTA, RESET);
 
     while (keep_receiver_thread_running)
     {
@@ -84,7 +84,7 @@ void *power_udp_receiver_thread_func(void *arg)
         }
         else if (bytes_received == 0)
         {
-            printf("[Cliente RX Thread] receive_message retornou 0. A thread vai terminar.\n");
+            printf("%s[Cliente RX Thread]%s receive_message retornou 0. A thread vai terminar.\n", MAGENTA, RESET);
             break;
         }
         else if (bytes_received == -1)
@@ -93,7 +93,7 @@ void *power_udp_receiver_thread_func(void *arg)
             usleep(100000);
         }
     }
-    printf("[Cliente RX Thread] Terminada.\n");
+    printf("%s[Cliente RX Thread]%s Terminada.\n", MAGENTA, RESET);
     return NULL;
 }
 

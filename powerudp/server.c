@@ -74,8 +74,8 @@ int add_client(int client_socket, struct sockaddr_in client_address, pthread_t t
             registered_clients[i].thread_id = tid;
             registered_clients[i].registration_time = time(NULL);
             num_registered_clients++;
-            printf(SERVER_LOG_PREFIX "Cliente %s:%d adicionado. Total: %d.\n",
-                   inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), num_registered_clients);
+            printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s adicionado. Total: %d.\n",
+                   BLUE, inet_ntoa(client_address.sin_addr), ntohs(client_address.sin_port), RESET, num_registered_clients);
             pthread_mutex_unlock(&clients_mutex);
             return i;
         }
@@ -98,9 +98,9 @@ void remove_client_by_socket(int client_socket)
             // Avoid closing it here again if it's already handled to prevent "bad file descriptor".
             registered_clients[i].socket_fd = -1; // Mark as invalid
             num_registered_clients--;
-            printf(SERVER_LOG_PREFIX "Cliente %s:%d removido. Total: %d.\n",
-                   inet_ntoa(registered_clients[i].address.sin_addr),
-                   ntohs(registered_clients[i].address.sin_port),
+            printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s removido. Total: %d.\n",
+                   BLUE, inet_ntoa(registered_clients[i].address.sin_addr),
+                   ntohs(registered_clients[i].address.sin_port), RESET,
                    num_registered_clients);
             break;
         }
@@ -144,8 +144,8 @@ void broadcast_config_multicast()
     }
     else
     {
-        printf(SERVER_LOG_PREFIX "Nova configuração difundida via multicast para %s:%d.\n",
-               inet_ntoa(multicast_addr_send.sin_addr), ntohs(multicast_addr_send.sin_port));
+        printf(SERVER_LOG_PREFIX "Nova configuração difundida via multicast para %s%s:%d%s.\n",
+               BLUE, inet_ntoa(multicast_addr_send.sin_addr), ntohs(multicast_addr_send.sin_port), RESET);
     }
 }
 
@@ -206,16 +206,16 @@ void *client_handler_thread(void *arg)
         if (strcmp(reg_msg->psk, server_psk) == 0)
         {
             client_authenticated = 1;
-            printf(SERVER_LOG_PREFIX "Cliente %s:%d autenticado com sucesso.\n", inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port));
+            printf(SERVER_LOG_PREFIX "Cliente %s%s:%d%s autenticado %scom sucesso%s.\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, GREEN, RESET);
         }
         else
         {
-            fprintf(stderr, SERVER_LOG_PREFIX "Falha na autenticação do cliente %s:%d (PSK inválida: '%s').\n", inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), reg_msg->psk);
+            fprintf(stderr, SERVER_LOG_PREFIX "Falha na autenticação do cliente %s%s:%d%s (PSK inválida: '%s').\n", BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET, reg_msg->psk);
         }
     }
     else
     {
-        fprintf(stderr, SERVER_LOG_PREFIX "Mensagem de registo com tamanho inválido (%zd bytes) de %s:%d.\n", bytes_received, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port));
+        fprintf(stderr, SERVER_LOG_PREFIX "Mensagem de registo com tamanho inválido (%zd bytes) de %s%s:%d%s.\n", bytes_received, BLUE, inet_ntoa(client_addr_info.sin_addr), ntohs(client_addr_info.sin_port), RESET);
     }
 
     if (!client_authenticated)
@@ -307,9 +307,9 @@ int main(int argc, char *argv[])
     strncpy(server_psk, psk_param, MAX_PSK_LEN - 1);
     server_psk[MAX_PSK_LEN - 1] = '\0'; // Ensure null-termination
 
-    printf(SERVER_LOG_PREFIX "A iniciar na porta TCP %d...\n", server_tcp_port_main);
-    printf(SERVER_LOG_PREFIX "PSK do Servidor: %s\n", server_psk);
-    printf(SERVER_LOG_PREFIX "Grupo Multicast para Config: %s:%d\n", MULTICAST_ADDRESS, MULTICAST_PORT);
+    printf(SERVER_LOG_PREFIX "A iniciar na porta TCP %s%d%s...\n", YELLOW, server_tcp_port_main, RESET);
+    printf(SERVER_LOG_PREFIX "PSK do Servidor: %s%s%s\n", YELLOW, server_psk, RESET);
+    printf(SERVER_LOG_PREFIX "Grupo Multicast para Config: %s%s:%d%s\n", BLUE, MULTICAST_ADDRESS, MULTICAST_PORT, RESET);
 
     // Initialize global configuration (base_timeout stored in host order)
     pthread_mutex_lock(&config_mutex);
@@ -359,7 +359,7 @@ int main(int argc, char *argv[])
         close(listen_fd);
         return 1;
     }
-    printf(SERVER_LOG_PREFIX "A escutar por conexões TCP na porta %d.\n", server_tcp_port_main);
+    printf(SERVER_LOG_PREFIX "A escutar por conexões TCP na porta %s%d%s.\n", YELLOW, server_tcp_port_main, RESET);
 
     // Configure Multicast socket for sending
     multicast_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -387,7 +387,7 @@ int main(int argc, char *argv[])
         close(multicast_sock);
         return 1;
     }
-    printf(SERVER_LOG_PREFIX "Socket multicast configurado para enviar para %s:%d.\n", MULTICAST_ADDRESS, MULTICAST_PORT);
+    printf(SERVER_LOG_PREFIX "Socket multicast configurado para enviar para %s%s:%d%s.\n", BLUE, MULTICAST_ADDRESS, MULTICAST_PORT, RESET);
 
     // Broadcast initial configuration via multicast when server starts
     broadcast_config_multicast();
@@ -405,8 +405,8 @@ int main(int argc, char *argv[])
             continue; // Try to accept next connection
         }
 
-        printf(SERVER_LOG_PREFIX "Nova conexão TCP de %s:%d.\n",
-               inet_ntoa(client_addr_tcp_loop.sin_addr), ntohs(client_addr_tcp_loop.sin_port));
+        printf(SERVER_LOG_PREFIX "Nova conexão TCP de %s%s:%d%s.\n",
+               BLUE, inet_ntoa(client_addr_tcp_loop.sin_addr), ntohs(client_addr_tcp_loop.sin_port), RESET);
 
         pthread_mutex_lock(&clients_mutex);
         int current_client_count = num_registered_clients; // Read while locked
