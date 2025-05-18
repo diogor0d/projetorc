@@ -15,6 +15,15 @@
 #define MAX_INPUT_LINE 2048
 #define MAX_MESSAGE_USER 1000 // tamanho maximo do payload de uma mensagem
 
+#define RED     "\x1b[31m"
+#define GREEN   "\x1b[32m"
+#define YELLOW  "\x1b[33m"
+#define BLUE    "\x1b[34m"
+#define MAGENTA "\x1b[35m"
+#define CYAN    "\x1b[36m"
+#define RESET   "\x1b[0m"
+#define BOLD    "\x1b[1m"
+
 // variável global para controlar a execução da thread de receção
 pthread_t receiver_thread_id;
 volatile int keep_receiver_thread_running = 0;
@@ -24,7 +33,7 @@ volatile sig_atomic_t sigint_received = 0; // flag para o sigint
 void handle_sigint(int sig)
 {
     (void)sig; // parametro nao usado
-    printf("\n[Cliente] SIGINT recebido. A terminar...\n");
+    printf("\n%s[Cliente]%s SIGINT recebido. A terminar...\n", MAGENTA, RESET);
     sigint_received = 1;
     // terminar a thread de receção e fechar o protocolo
     if (keep_receiver_thread_running)
@@ -32,7 +41,7 @@ void handle_sigint(int sig)
         keep_receiver_thread_running = 0;
     }
     close_protocol();
-    printf("[Cliente] Todos os recursos foram limpos.\n");
+    printf("%s[Cliente]%s Todos os recursos foram limpos.\n", MAGENTA, RESET);
     exit(0);
 }
 
@@ -45,7 +54,7 @@ void *power_udp_receiver_thread_func(void *arg)
     char sender_ip[INET_ADDRSTRLEN]; // Buffer for sender's IP string
     uint16_t sender_port;            // For sender's port
 
-    printf("[Cliente RX Thread] À escuta por novas mensagens PowerUDP.\n");
+    printf("%s[Cliente RX Thread]%s À escuta por novas mensagens PowerUDP.\n", MAGENTA, RESET);
 
     while (keep_receiver_thread_running)
     {
@@ -65,17 +74,17 @@ void *power_udp_receiver_thread_func(void *arg)
 
             if (sender_ip[0] != '\0' && sender_port != 0)
             {
-                printf("\n<Mensagem Recebida de %s:%u> %s\n> ", sender_ip, sender_port, recv_buffer);
+                printf("\n\033[32m<Mensagem Recebida de %s:%u> %s\033[0m\n> ", sender_ip, sender_port, recv_buffer);
             }
             else
             {
-                printf("\n<Mensagem Recebida> %s\n> ", recv_buffer); // failsafe caso não haja IP/Porta
+                printf("\n\033[32m<Mensagem Recebida> %s\033[0m\n> ", recv_buffer); // failsafe caso não haja IP/Porta
             }
             fflush(stdout);
         }
         else if (bytes_received == 0)
         {
-            printf("[Cliente RX Thread] receive_message retornou 0. A thread vai terminar.\n");
+            printf("%s[Cliente RX Thread]%s receive_message retornou 0. A thread vai terminar.\n", MAGENTA, RESET);
             break;
         }
         else if (bytes_received == -3) // Server shutdown signal
@@ -109,7 +118,7 @@ void *power_udp_receiver_thread_func(void *arg)
             usleep(100000);
         }
     }
-    printf("[Cliente RX Thread] Terminada.\n");
+    printf("%s[Cliente RX Thread]%s Terminada.\n", MAGENTA, RESET);
     return NULL;
 }
 
@@ -122,23 +131,15 @@ void print_usage(const char *prog_name)
 
 void print_commands()
 {
-    const char *BOLD = "\033[1m";
-    const char *RESET = "\033[0m";
-    const char *CYAN = "\033[36m";
-    const char *YELLOW = "\033[33m";
-    const char *GREEN = "\033[32m";
-    const char *MAGENTA = "\033[35m";
-    const char *RED = "\033[31m";
-
-    printf("\n%s================================= Comandos Disponíveis =================================%s\n", BOLD, RESET);
-    printf(" %s%s %s<IP>:<Porta> <mensagem>%s - Envia uma mensagem PowerUDP para o destino especificado.\n", CYAN, BOLD, "send", RESET);
+    printf("\n%s============================ Comandos Disponíveis ============================%s\n", BOLD, RESET);
+    printf("  %s%s %s<IP>:<Porta> <mensagem>%s - Envia uma mensagem PowerUDP para o destino especificado.\n", CYAN, "send", BOLD, RESET);
     printf("  %s%s %s<retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries>%s - Solicita a alteração das configurações do protocolo.\n", YELLOW, "config", BOLD, RESET);
     printf("  %s%s%s - Exibe estatísticas da última mensagem enviada.\n", GREEN, "stats", RESET);
     printf("  %s%s %s<percentual>%s - Simula perda de pacotes na receção (0-100%%).\n", RED, "loss", BOLD, RESET);
     printf("  %s%s%s - Mostra este menu de ajuda.\n", MAGENTA, "help", RESET);
     printf("  %s%s%s - Encerra o cliente PowerUDP.\n", CYAN, "quit", RESET);
 
-    printf("%s========================================================================================%s\n", BOLD, RESET);
+    printf("%s==============================================================================%s\n", BOLD, RESET);
     fflush(stdout);
 }
 
@@ -156,18 +157,18 @@ int main(int argc, char *argv[])
     int server_tcp_port = atoi(argv[2]);
     const char *psk = (argc == 4) ? argv[3] : PSK_DEFAULT;
 
-    printf("[Cliente] A iniciar...\n");
-    printf("  Servidor de Configuração: %s:%d\n", server_ip, server_tcp_port);
-    printf("  Porta UDP Cliente (PowerUDP): %d\n", POWER_UDP_PORT_CLIENT);
-    printf("  PSK: %s\n", psk);
-    printf("  Grupo Multicast: %s:%d\n", MULTICAST_ADDRESS, MULTICAST_PORT);
+    printf("%s[Cliente]%s A iniciar...%s\n", MAGENTA, GREEN, RESET);
+    printf("  Servidor de Configuração: %s%s:%d%s\n", YELLOW, server_ip, server_tcp_port, RESET);
+    printf("  Porta UDP Cliente (PowerUDP): %s%d%s\n", YELLOW, POWER_UDP_PORT_CLIENT, RESET);
+    printf("  PSK: %s%s%s\n", YELLOW, psk, RESET);
+    printf("  Grupo Multicast: %s%s:%d%s\n", YELLOW, MULTICAST_ADDRESS, MULTICAST_PORT, RESET);
 
     if (init_protocol(server_ip, server_tcp_port, psk) != 0)
     {
         fprintf(stderr, "[Cliente Error] Falha ao inicializar o protocolo PowerUDP.\n");
         return 1;
     }
-    printf("[Cliente] Protocolo PowerUDP inicializado com sucesso.\n");
+    printf("%s[Cliente]%s Protocolo PowerUDP inicializado com sucesso.\n", MAGENTA, RESET);
 
     keep_receiver_thread_running = 1;
     if (pthread_create(&receiver_thread_id, NULL, power_udp_receiver_thread_func, NULL) != 0)
@@ -229,7 +230,7 @@ int main(int argc, char *argv[])
 
         if (strcmp(command, "quit") == 0)
         {
-            printf("[Cliente] A terminar...\n");
+            printf("%s[Cliente]%s A terminar...\n", MAGENTA, RESET);
             break;
         }
         else if (strcmp(command, "help") == 0)
@@ -264,12 +265,12 @@ int main(int argc, char *argv[])
                     {
                         strncpy(message_payload, msg_start, MAX_MESSAGE_USER - 1);
                         message_payload[MAX_MESSAGE_USER - 1] = '\0';
-                        printf("[Cliente] A enviar \"%s\" para %s:%d...\n", message_payload, dest_ip_str, dest_port_int);
+                        printf("%s[Cliente]%s A enviar \"%s\" para %s:%d...\n", MAGENTA, RESET, message_payload, dest_ip_str, dest_port_int);
                         // Chamada a send_message MODIFICADA
                         int bytes_sent = send_message(dest_ip_str, dest_port_int, message_payload, strlen(message_payload));
                         if (bytes_sent > 0)
                         {
-                            printf("[Cliente] Mensagem enviada com sucesso (%d bytes).\n", bytes_sent);
+                            printf("%s[Cliente]%s Mensagem enviada %scom sucesso%s (%d bytes).\n", MAGENTA, RESET, GREEN, RESET, bytes_sent);
                         }
                         else if (bytes_sent == -1)
                         {
@@ -302,7 +303,7 @@ int main(int argc, char *argv[])
             {
                 if (request_protocol_config(retrans, backoff, seq, (uint16_t)timeout, (uint8_t)retries_val) == 0)
                 {
-                    printf("[Cliente] Pedido de configuração enviado ao servidor.\n");
+                    printf("%s[Cliente]%s Pedido de configuração enviado ao servidor.\n", MAGENTA, RESET);
                 }
                 else
                 {
@@ -320,7 +321,7 @@ int main(int argc, char *argv[])
             int delivery_time_val;
             if (get_last_message_stats(&retransmissions_val, &delivery_time_val) == 0)
             {
-                printf("[Cliente] Estatísticas da última mensagem enviada:\n");
+                printf("%s[Cliente]%s Estatísticas da última mensagem enviada:\n", MAGENTA ,RESET);
                 printf("  Retransmissões: %d\n", retransmissions_val);
                 if (delivery_time_val >= 0)
                 {
@@ -333,7 +334,7 @@ int main(int argc, char *argv[])
             }
             else
             {
-                printf("[Cliente] Nenhuma estatística disponível ou erro ao obter.\n");
+                printf("%s[Cliente]%s Nenhuma estatística disponível ou erro ao obter.\n", MAGENTA, RESET);
             }
         }
         else if (strcmp(command, "loss") == 0)
@@ -356,7 +357,7 @@ int main(int argc, char *argv[])
     }
     close_protocol();
     pthread_join(receiver_thread_id, NULL);
-    printf("[Cliente] Todos os recursos foram limpos.\n");
+    printf("%s[Cliente]%s Todos os recursos foram limpos.\n", MAGENTA, RESET);
 
     return 0;
 }
