@@ -13,6 +13,7 @@
 #include <pthread.h>  // Para a thread do listener multicast
 #include <time.h>     // Para srand() e rand() na simulação de perda
 #include <errno.h>    // Para perror e errno
+#include <signal.h>   // Para tratamento de sinais
 
 // Variáveis estáticas para o estado interno do protocolo PowerUDP
 // Estas variáveis mantêm o estado dos sockets, configuração atual, estatísticas, etc.
@@ -34,6 +35,7 @@ static int stats_are_valid_internal = 0;    // 1 se as estatísticas são de uma
 static pthread_t multicast_thread_id;                    // ID da thread para o listener multicast
 static volatile int protocol_initialized = 0;            // Flag: 1 se o protocolo está inicializado, 0 caso contrário
 static volatile int keep_multicast_listener_running = 0; // Flag para controlar a execução da thread multicast
+static volatile int server_is_shutting_down = 0;         // New global flag
 
 // Parâmetros operacionais atuais do PowerUDP (atualizados via multicast)
 static power_udp_config_t internal_power_udp_state; // Estrutura que contém a configuração ativa
@@ -76,6 +78,11 @@ void *multicast_listener_thread_func(void *arg)
             break;
         }
 
+        if (server_is_shutting_down)
+        {
+            break;
+        }
+
         // Tratar erros de recvfrom
         if (bytes_received < 0)
         {
@@ -97,8 +104,33 @@ void *multicast_listener_thread_func(void *arg)
         // Verificar se o tamanho da mensagem recebida corresponde ao esperado para ConfigMessage
         if (bytes_received == sizeof(ConfigMessage))
         {
-            ConfigMessage new_config_msg;                           // Estrutura para guardar a nova configuração
-            memcpy(&new_config_msg, buffer, sizeof(ConfigMessage)); // Copiar os dados do buffer para a estrutura
+            ConfigMessage new_config_msg;
+            memcpy(&new_config_msg, buffer, sizeof(ConfigMessage));
+
+            if (new_config_msg.server_shutdown_signal == 1)
+            {
+                printf("[PowerUDP] Recebido sinal de shutdown do servidor via multicast.\n");
+                server_is_shutting_down = 1;
+                keep_multicast_listener_running = 0; // Stop this multicast listener thread
+
+                // Close the main UDP socket to unblock receive_message() in the client's receiver thread
+                if (udp_socket_internal != -1)
+                {
+                    // Consider shutdown(udp_socket_internal, SHUT_RDWR); for a more graceful close
+                    // before the actual close, but close() will also work to unblock.
+                    close(udp_socket_internal);
+                    // udp_socket_internal = -1; // Let close_protocol handle setting this to -1
+                }
+
+                printf("[PowerUDP] Multicast listener enviando SIGINT para o processo principal...\n");
+                if (kill(getpid(), SIGINT) != 0)
+                {
+                    perror("[PowerUDP Error] Multicast listener falhou ao enviar SIGINT");
+                    // If sending SIGINT fails, the client might still shut down if its
+                    // receiver thread detects the closed main UDP socket.
+                }
+                break; // Exit multicast listener loop
+            }
 
             // Aplicar a nova configuração.
             // Considerar um mutex se internal_power_udp_state for acedida por múltiplas threads concorrentemente.
@@ -138,8 +170,8 @@ int init_protocol(const char *server_ip, int server_tcp_port_param, const char *
         fprintf(stderr, "[PowerUDP Error] Protocolo já inicializado.\n");
         return -1; // Retornar erro
     }
-
-    srand(time(NULL)); // Inicializar o gerador de números aleatórios para simulação de perda de pacotes
+    server_is_shutting_down = 0; // Initialize flag
+    srand(time(NULL));           // Inicializar o gerador de números aleatórios para simulação de perda de pacotes
 
     // Inicializar o estado padrão do PowerUDP
     internal_power_udp_state.retransmission_enabled = 1;        // Ativar retransmissão por defeito
@@ -487,7 +519,7 @@ int send_message(const char *destination_ip, int destination_port, const char *m
         // Simular perda de pacotes se ativado
         if (internal_power_udp_state.packet_loss_probability > 0 && (rand() % 100) < internal_power_udp_state.packet_loss_probability)
         {
-            printf("[PowerUDP SIMULATE] Pacote DATA (seq %u) para %s:%d PERDIDO intencionalmente (tentativa %d).\n",
+            printf("[PowerUDP SIMULATE] Pacote PowerUDP (seq %u) para %s:%d PERDIDO intencionalmente (tentativa %d).\n",
                    ntohl(packet_to_send.header.sequence_number), destination_ip, destination_port, attempts);
         }
         else
@@ -504,7 +536,7 @@ int send_message(const char *destination_ip, int destination_port, const char *m
                                             (time_end_send.tv_usec - time_start_send.tv_usec) / 1000;
                 return -1;
             }
-            printf("[PowerUDP] Pacote DATA (seq %u, %zd bytes) enviado para %s:%d (tentativa %d).\n",
+            printf("[PowerUDP] Pacote PowerUDP (seq %u, %zd bytes) enviado para %s:%d (tentativa %d).\n",
                    ntohl(packet_to_send.header.sequence_number), bytes_sent, destination_ip, destination_port, attempts);
         }
 
@@ -663,6 +695,15 @@ int send_message(const char *destination_ip, int destination_port, const char *m
 // Recebe uma mensagem usando o protocolo PowerUDP
 int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_ip_str_len, uint16_t *sender_port)
 {
+    if (server_is_shutting_down) // Check at the beginning
+    {
+        if (sender_ip_str && sender_ip_str_len > 0)
+            sender_ip_str[0] = '\0';
+        if (sender_port)
+            *sender_port = 0;
+        return -3; // Special return code for server shutdown
+    }
+
     if (!protocol_initialized || udp_socket_internal < 0)
     { // Verificar inicialização
         fprintf(stderr, "[PowerUDP Error] Protocolo não inicializado para receive_message.\n");
@@ -670,7 +711,7 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
             sender_ip_str[0] = '\0';
         if (sender_port)
             *sender_port = 0;
-        return -2;
+        return server_is_shutting_down ? -3 : -2; // Prioritize shutdown signal
     }
     if (sender_ip_str == NULL || sender_ip_str_len <= 0 || sender_port == NULL)
     {
@@ -684,6 +725,15 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
 
     while (protocol_initialized)
     {
+        if (server_is_shutting_down) // Check inside the loop as well
+        {
+            if (sender_ip_str && sender_ip_str_len > 0)
+                sender_ip_str[0] = '\0';
+            if (sender_port)
+                *sender_port = 0;
+            return -3;
+        }
+
         memset(&received_packet, 0, sizeof(received_packet));
         current_addr_len = sizeof(current_sender_addr);               // Reset for each call
         memset(&current_sender_addr, 0, sizeof(current_sender_addr)); // Clear sender_addr
@@ -691,6 +741,9 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
         // Step 1: Peek at the incoming packet without removing it from the queue
         ssize_t bytes_peeked = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), MSG_PEEK,
                                         (struct sockaddr *)&current_sender_addr, &current_addr_len);
+
+        if (server_is_shutting_down)
+            return -3; // Check after potentially blocking call
 
         if (!protocol_initialized)
         {
@@ -700,6 +753,9 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
 
         if (bytes_peeked < 0)
         {
+            if (server_is_shutting_down)
+                return -3; // Check if error is due to shutdown
+
             if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
                 // This might happen if SO_RCVTIMEO is set on udp_socket_internal,
@@ -709,7 +765,23 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
                 continue;
             }
             if (errno == EINTR)
-                continue; // Interrupted by signal, retry PEEK
+                continue;
+            if (errno == EBADF && server_is_shutting_down)
+            { // Socket closed by multicast thread
+                printf("[PowerUDP] receive_message: Socket fechado, provável shutdown do servidor.\n");
+                if (!server_is_shutting_down)
+                {
+                    server_is_shutting_down = 1;
+                }
+                return -3; // Signal server shutdown
+            }
+
+            if (server_is_shutting_down) // Check if error is due to shutdown
+            {
+                // Example: recvfrom timed out (EAGAIN/EWOULDBLOCK), but we know server is shutting down.
+                // Or an interrupt (EINTR) occurred during shutdown.
+                return -3; // Signal server shutdown
+            }
 
             // Only print error if protocol is supposed to be running
             if (protocol_initialized)
@@ -751,6 +823,9 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
             ssize_t bytes_consumed = recvfrom(udp_socket_internal, &received_packet, sizeof(received_packet), 0,
                                               NULL, NULL); // Address already known from PEEK, don't need to get it again
 
+            if (server_is_shutting_down)
+                return -3; // Check after potentially blocking call
+
             if (!protocol_initialized)
             { // Check again after potentially blocking call
                 printf("[PowerUDP] receive_message: Protocolo fechado após PEEK, durante consumo de DATA.\n");
@@ -758,20 +833,27 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
                     sender_ip_str[0] = '\0';
                 if (sender_port)
                     *sender_port = 0;
-                return 0;
+                return server_is_shutting_down ? -3 : 0;
             }
 
             if (bytes_consumed < 0)
             {
+                if (server_is_shutting_down)
+                    return -3;
                 if (errno == EINTR)
                     continue; // Interrupted, retry loop
+                if (errno == EBADF && server_is_shutting_down)
+                {
+                    printf("[PowerUDP] receive_message: Socket fechado (consumo DATA), provável shutdown do servidor.\n");
+                    return -3;
+                }
                 if (protocol_initialized)
                     perror("[PowerUDP Error] recvfrom (consume DATA) in receive_message");
-                return -1;
+                return server_is_shutting_down ? -3 : -1;
             }
             if (bytes_consumed < (ssize_t)sizeof(power_udp_header_t))
             { // Should be consistent with peek
-                printf("[PowerUDP Warning] Pacote DATA consumido demasiado curto (%zd bytes). Ignorando.\n", bytes_consumed);
+                printf("[PowerUDP Warning] Pacote PowerUDP consumido demasiado curto (%zd bytes). Ignorando.\n", bytes_consumed);
                 continue;
             }
 
@@ -783,17 +865,17 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
 
             if (data_len > (bytes_consumed - sizeof(power_udp_header_t)))
             {
-                fprintf(stderr, "[PowerUDP Warning] Inconsistência no tamanho do payload DATA (declarado %u, efetivo %ld). Ignorando.\n",
+                fprintf(stderr, "[PowerUDP Warning] Inconsistência no tamanho do payload PowerUDP (declarado %u, efetivo %ld). Ignorando.\n",
                         data_len, (long)(bytes_consumed - sizeof(power_udp_header_t)));
                 continue;
             }
             if (data_len == 0)
             {
-                printf("[PowerUDP Info] Pacote DATA (seq %u) recebido com payload vazio (len 0).\n", recv_seq_num_host);
+                printf("[PowerUDP Info] Pacote PowerUDP (seq %u) recebido com payload vazio (len 0).\n", recv_seq_num_host);
             }
             if (data_len > (unsigned int)bufsize)
             {
-                fprintf(stderr, "[PowerUDP Warning] Payload do pacote DATA (%u bytes) excede buffer da aplicação (%d bytes). Pacote descartado.\n", data_len, bufsize);
+                fprintf(stderr, "[PowerUDP Warning] Payload do pacote PowerUDP (%u bytes) excede buffer da aplicação (%d bytes). Pacote descartado.\n", data_len, bufsize);
                 if (internal_power_udp_state.retransmission_enabled && internal_power_udp_state.sequence_enabled)
                 {
                     power_udp_packet_t nak_packet;
@@ -807,7 +889,7 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
                 continue;
             }
 
-            printf("[PowerUDP] Pacote DATA recebido (seq %u, len %u) de %s:%d.\n",
+            printf("[PowerUDP] Pacote PowerUDP recebido (seq %u, len %u) de %s:%d.\n",
                    recv_seq_num_host, data_len,
                    inet_ntoa(current_sender_addr.sin_addr), ntohs(current_sender_addr.sin_port));
 
@@ -816,7 +898,17 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
 
             if (internal_power_udp_state.sequence_enabled)
             {
-                if (recv_seq_num_host == internal_power_udp_state.expected_recv_sequence_number)
+                // caso especial para permitir o reset da sequencia para acomodar um novo cliente:
+                // se é recebido um pacote com seq 0, o seq local é redefinido para 1
+                if (recv_seq_num_host == 0 && internal_power_udp_state.expected_recv_sequence_number > 0)
+                {
+                    printf("[PowerUDP Info] Recebido pacote com seq 0 (esperado %u). Redefinindo seq local para 1 para receber comunicações de um novo cliente.\n",
+                           internal_power_udp_state.expected_recv_sequence_number);
+                    accept_packet_flag = 1;
+                    send_ack_flag = 1;                                          // ACK for sequence 0
+                    internal_power_udp_state.expected_recv_sequence_number = 1; // Expect 1 next
+                }
+                else if (recv_seq_num_host == internal_power_udp_state.expected_recv_sequence_number)
                 {
                     accept_packet_flag = 1;
                     send_ack_flag = 1;
@@ -824,30 +916,60 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
                 }
                 else if (recv_seq_num_host < internal_power_udp_state.expected_recv_sequence_number)
                 {
-                    send_ack_flag = 1;
-                    accept_packet_flag = 0;
-                    printf("[PowerUDP Info] Pacote DATA duplicado/antigo (seq %u, esperado %u). Reenviando ACK.\n",
-                           recv_seq_num_host, internal_power_udp_state.expected_recv_sequence_number);
-                }
-                else
-                { // recv_seq_num_host > internal_power_udp_state.expected_recv_sequence_number
+                    // Pacote antigo/duplicado (e não é o caso de reset seq 0). Enviar NACK.
+                    accept_packet_flag = 0; // Não processar payload
                     if (internal_power_udp_state.retransmission_enabled)
                     {
                         power_udp_packet_t nak_packet;
                         nak_packet.header.type = PACKET_TYPE_NAK;
+                        // NACK para o número de sequência recebido, para informar o remetente sobre qual pacote foi rejeitado como duplicado/antigo.
                         nak_packet.header.sequence_number = recv_seq_num_net;
                         nak_packet.header.data_length = 0;
                         sendto(udp_socket_internal, &nak_packet, sizeof(power_udp_header_t), 0,
                                (struct sockaddr *)&current_sender_addr, current_addr_len);
-                        printf("[PowerUDP] Pacote DATA fora de ordem (seq %u, esperado %u). Enviado NAK para seq %u.\n",
+                        printf("[PowerUDP Info] Pacote antigo/duplicado (seq %u, esperado %u). Enviado NAK para seq %u.\n",
                                recv_seq_num_host, internal_power_udp_state.expected_recv_sequence_number, recv_seq_num_host);
                     }
-                    accept_packet_flag = 0;
+                    // send_ack_flag não é definido como true aqui, pois um NAK foi enviado (ou nada se retransmissão desabilitada)
+                }
+                else // recv_seq_num_host > internal_power_udp_state.expected_recv_sequence_number // recv_seq_num_host > internal_power_udp_state.expected_recv_sequence_number
+                {
+                    // Pacote está adiantado em relação ao esperado.
+                    // Caso especial: se estamos esperando seq 0 (cliente recém-iniciado/reiniciado)
+                    // e recebemos um pacote com seq > 0, podemos assumir que o remetente está à frente
+                    // e tentar sincronizar "saltando" para a sequência do remetente.
+                    if (internal_power_udp_state.expected_recv_sequence_number == 0 && recv_seq_num_host > 0)
+                    {
+                        printf("[PowerUDP Info] Sincronização de sequência: esperado 0, recebido %u. A aceitar novo cliente e alterando seq para %u.\n",
+                               recv_seq_num_host, recv_seq_num_host + 1);
+                        accept_packet_flag = 1;
+                        send_ack_flag = 1;                                                              // Enviar ACK para o pacote recebido
+                        internal_power_udp_state.expected_recv_sequence_number = recv_seq_num_host + 1; // Saltar para a próxima sequência esperada
+                    }
+                    else
+                    {
+                        // Caso geral para pacote fora de ordem (adiantado, mas não estamos em seq 0)
+                        // Enviar NAK para o número de sequência recebido, indicando que este pacote específico não era esperado.
+                        if (internal_power_udp_state.retransmission_enabled)
+                        {
+                            power_udp_packet_t nak_packet;
+                            nak_packet.header.type = PACKET_TYPE_NAK;
+                            nak_packet.header.sequence_number = recv_seq_num_net; // NAK para o recv_seq_num
+                            nak_packet.header.data_length = 0;
+                            sendto(udp_socket_internal, &nak_packet, sizeof(power_udp_header_t), 0,
+                                   (struct sockaddr *)&current_sender_addr, current_addr_len);
+                            printf("[PowerUDP] Pacote PowerUDP fora de ordem (seq %u, esperado %u). Enviado NAK para seq %u.\n",
+                                   recv_seq_num_host, internal_power_udp_state.expected_recv_sequence_number, recv_seq_num_host);
+                        }
+                        accept_packet_flag = 0; // Não aceitar este pacote
+                    }
                 }
             }
-            else
+            else // sequence_enabled is false
             {
                 accept_packet_flag = 1;
+                // Se retransmissões estiverem ativadas, ainda devemos enviar ACK mesmo se a sequência estiver desabilitada para entrega de payload
+                // A flag send_ack_flag será verificada em conjunto com retransmission_enabled mais abaixo.
                 send_ack_flag = 1;
             }
 
@@ -896,6 +1018,8 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
         else if (received_packet.header.type == PACKET_TYPE_ACK ||
                  received_packet.header.type == PACKET_TYPE_NAK)
         {
+            if (server_is_shutting_down)
+                return -3; // Check before yielding
             // It's an ACK or NAK. This is likely for send_message().
             // Do NOT consume it with recvfrom() here. Let send_message's select/recvfrom handle it.
             // Yield CPU for a very short time to give send_message a chance.
@@ -916,7 +1040,7 @@ int receive_message(char *buffer, int bufsize, char *sender_ip_str, int sender_i
         sender_ip_str[0] = '\0';
     if (sender_port)
         *sender_port = 0;
-    return 0; // Should only be reached if protocol_initialized becomes false
+    return server_is_shutting_down ? -3 : 0; // Should only be reached if protocol_initialized becomes false
 }
 
 // Obtém estatísticas da última mensagem enviada pelo PowerUDP
