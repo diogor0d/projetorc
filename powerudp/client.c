@@ -97,14 +97,23 @@ void print_usage(const char *prog_name)
 
 void print_commands()
 {
-    printf("\nComandos disponíveis:\n");
-    printf("  send <IP_Destino>:<Porta_Destino> <mensagem> - Envia uma mensagem PowerUDP\n");
-    printf("  config <retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries> - Pede alteração de config\n");
-    printf("  stats - Mostra estatísticas da última mensagem enviada\n");
-    printf("  loss <probabilidade_percentual> - Simula perda de pacotes (0-100)\n");
-    printf("  help - Mostra esta ajuda\n");
-    printf("  quit - Fecha o cliente\n");
-    printf("> ");
+    const char *BOLD = "\033[1m";
+    const char *RESET = "\033[0m";
+    const char *CYAN = "\033[36m";
+    const char *YELLOW = "\033[33m";
+    const char *GREEN = "\033[32m";
+    const char *MAGENTA = "\033[35m";
+    const char *RED = "\033[31m";
+
+    printf("\n%s================================= Comandos Disponíveis =================================%s\n", BOLD, RESET);
+    printf(" %s%s %s<IP>:<Porta> <mensagem>%s - Envia uma mensagem PowerUDP para o destino especificado.\n", CYAN, BOLD, "send", RESET);
+    printf("  %s%s %s<retrans:0|1> <backoff:0|1> <seq:0|1> <timeout_ms> <retries>%s - Solicita a alteração das configurações do protocolo.\n", YELLOW, "config", BOLD, RESET);
+    printf("  %s%s%s - Exibe estatísticas da última mensagem enviada.\n", GREEN, "stats", RESET);
+    printf("  %s%s %s<percentual>%s - Simula perda de pacotes na receção (0-100%%).\n", RED, "loss", BOLD, RESET);
+    printf("  %s%s%s - Mostra este menu de ajuda.\n", MAGENTA, "help", RESET);
+    printf("  %s%s%s - Encerra o cliente PowerUDP.\n", CYAN, "quit", RESET);
+
+    printf("%s========================================================================================%s\n", BOLD, RESET);
     fflush(stdout);
 }
 
